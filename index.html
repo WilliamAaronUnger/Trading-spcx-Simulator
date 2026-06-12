@@ -201,6 +201,9 @@
   .np-card.up{border-left-color:var(--up)} .np-card.down{border-left-color:var(--down)}
   .np-card.insider{border-left-color:var(--accent)}
   .np-card.insider .np-live{color:var(--accent)}
+  .np-card.mega{border-color:var(--accent);border-left-width:4px;
+                box-shadow:0 18px 50px rgba(0,0,0,.5),0 0 26px rgba(255,180,84,.3)}
+  .np-card.mega .np-live{color:var(--accent)}
   @keyframes npIn{from{transform:translateY(-14px);opacity:0}to{transform:none;opacity:1}}
   @media (prefers-reduced-motion: reduce){.np-card{animation:none}}
   .np-head{display:flex;align-items:center;gap:8px}
@@ -516,6 +519,23 @@ const OPENING_EVENT = {t:"SPCX",
   txt:"Eröffnung: SPCX startet über dem Ausgabepreis von 135 $.",
   jump:+0.012, drift:+0.0006, dur:24};
 
+/* Mega-Events: seltene Spezialereignisse mit gewaltigem Sprung (~50 % der
+   Spiele, höchstens eines). Statt Vorwarnung gibt es eine lange Zündschnur:
+   Der Kurs reagiert erst MEGA_REACT_TICKS (~20 s) nach der Meldung – genug
+   Zeit zum Aufspringen UND zum Eindecken offener Shorts. Positive Events
+   +20–40 %, die Marktpanik bewusst gedeckelt (Verluste nie vernichtend).
+   newsMult wird hier nicht angewendet, damit die Größenordnung planbar bleibt.
+   Bewusst NICHT in den Insider-Tipps: Mega-Events bleiben unangekündigt. */
+const MEGA_REACT_TICKS = Math.round(20000 / TICK_MS);
+const MEGA_POOL = [
+  {t:"SPCX", txt:"💥 MEGA: Jahrhundert-Auftrag! Regierung lässt SpaceX die Mond-Basis bauen.", jump:+0.30, drift:+0.0008, dur:40},
+  {t:"TSLA", txt:"💥 MEGA: Durchbruch! Teslas neuer Akku lädt in 90 Sekunden voll.",            jump:+0.28, drift:+0.0008, dur:40},
+  {t:"NVDA", txt:"💥 MEGA: KI-Partnerschaft! NVIDIA wird Exklusiv-Ausrüster der großen KI-Labore.", jump:+0.26, drift:+0.0008, dur:40},
+  {t:"RKLB", txt:"💥 MEGA: Medizin-Durchbruch in Schwerelosigkeit – Rocket-Lab-Kapseln auf Jahre ausgebucht!", jump:+0.32, drift:+0.0009, dur:40},
+  {t:"ALL",  txt:"💥 MEGA: Branchenboom! Regierungen verdoppeln weltweit die Raumfahrt- und Tech-Budgets.", jump:+0.20, drift:+0.0006, dur:44},
+  {t:"ALL",  txt:"💥 MEGA: Marktpanik! Flash-Crash reißt alle Werte gleichzeitig in die Tiefe.", jump:-0.13, drift:-0.0004, dur:40},
+];
+
 /* Momentum-News: beziehen sich auf die Aktie, die gerade am stärksten läuft (%SYM% wird ersetzt) */
 const MOMENTUM_POOL = {
   upCont: [
@@ -602,6 +622,13 @@ function genMarket(seed, ticks){
   const chainsLeft = [...CHAIN_POOL]; // jede Kette höchstens einmal pro Spiel
   let chainQueue = [];                // geplante Auflösungen (Bestätigung/Dementi)
 
+  // Mega-Event vorab würfeln: ~50 % der Spiele, genau eines, im mittleren Spielteil
+  let megaAt = -1, megaEv = null;
+  if(rnd() < 0.5){
+    megaEv = MEGA_POOL[Math.floor(rnd()*MEGA_POOL.length)];
+    megaAt = Math.min(Math.round(ticks * (0.3 + rnd()*0.45)), ticks - (MEGA_REACT_TICKS + 20));
+  }
+
   /* Event auslösen: News erscheint bei Tick i, der Kurs reagiert erst
      REACT_TICKS später – so bleibt Zeit, auf die Meldung zu reagieren.
      Die rnd()-Aufrufe passieren trotzdem hier, damit die PRNG-Reihenfolge
@@ -622,15 +649,34 @@ function genMarket(seed, ticks){
     events.push({tick:i, ev:resolved, tag: resolved.jump > 0 ? "up" : resolved.jump < 0 ? "down" : "neutral"});
   }
 
+  /* Mega-Event: eigene, lange Zündschnur (MEGA_REACT_TICKS) und ohne newsMult */
+  function fireMega(i, ev){
+    const dur = Math.round(ev.dur * TICK_SCALE);
+    const hits = i + MEGA_REACT_TICKS;
+    const targets = ev.t === "ALL" ? Object.keys(prices) : [ev.t];
+    for(const s of targets){
+      pendingJumps.push({at:hits, sym:s, factor: 1 + ev.jump * (0.9 + rnd()*0.2)});
+    }
+    if(ev.drift) effects.push({sym:ev.t, drift:ev.drift * TICK_SCALE, from:hits, until:hits + dur});
+    if(ev.t !== "ALL") lastEventSym = ev.t;
+    events.push({tick:i, ev:{t:ev.t, txt:ev.txt, jump:ev.jump, drift:ev.drift, dur},
+                 tag: ev.jump > 0 ? "up" : "down", mega:true});
+  }
+
   const LOOKBACK = Math.round(60000 / TICK_MS); // Momentum über die letzte Minute
 
   for(let i = 1; i <= ticks; i++){
     // Opening-Pop fest am Anfang
     if(i === 3) fire(i, OPENING_EVENT, "SPCX");
 
+    if(i === megaAt) fireMega(i, megaEv);
+
     // Zufalls-News: ~50% Momentum-News über die gerade "beliebte" Aktie, sonst klassische News
     // Spätgrenze so, dass der verzögerte Kurssprung noch vor Spielende passiert
-    if(i === nextEvent && i < ticks - (REACT_TICKS + 12)){
+    if(i === nextEvent && i === megaAt){
+      // Kollision mit dem Mega-Event: normale News kurz nach hinten schieben
+      nextEvent = i + Math.round(20 * TICK_SCALE);
+    }else if(i === nextEvent && i < ticks - (REACT_TICKS + 12)){
       if(rnd() < 0.5){
         let best = null, bestScore = -1;
         for(const sym of Object.keys(prices)){
@@ -699,7 +745,7 @@ function genMarket(seed, ticks){
      Deterministisch aus dem Seed → beide Spieler/Geräte bekommen dieselben Tipps. */
   const lead = Math.round(50000 / TICK_MS);
   const tips = [];
-  const candidates = events.filter(e => e.ev.t !== "ALL" && Math.abs(e.ev.jump) >= 0.008 && e.tick > lead + 10);
+  const candidates = events.filter(e => !e.mega && e.ev.t !== "ALL" && Math.abs(e.ev.jump) >= 0.008 && e.tick > lead + 10);
   for(const [lo, hi] of [[0.12, 0.5], [0.5, 0.95]]){
     const zone = candidates.filter(e =>
       e.tick >= ticks*lo && e.tick < ticks*hi && !tips.some(t => t.eventTick === e.tick));
@@ -996,13 +1042,16 @@ let npTimer = null;
 function showNewsPop(e){
   if(mode === "local") newsPaused = true;
   clearTimeout(npTimer);
-  if(mode === "remote") npTimer = setTimeout(closeNewsPop, 6000);
+  if(mode === "remote") npTimer = setTimeout(closeNewsPop, e.mega ? 12000 : 6000);
   const sym = e.ev.t;
-  $("npLive").textContent = e.insider ? "Insider" : "Breaking";
+  $("npLive").textContent = e.insider ? "Insider" : e.mega ? "Mega-Event" : "Breaking";
   $("npHint").style.display = e.insider ? "none" : "";
+  $("npHint").textContent = e.mega
+    ? "💥 Gewaltige Kursreaktion in ~20 Sekunden – noch ist Zeit zu handeln!"
+    : "⏳ Der Markt reagiert in wenigen Sekunden …";
   $("npSym").textContent = sym === "ALL" ? "MARKT" : sym;
   $("npSym").className = "np-sym " + e.tag;
-  $("npCard").className = "np-card " + e.tag + (e.insider ? " insider" : "");
+  $("npCard").className = "np-card " + e.tag + (e.insider ? " insider" : "") + (e.mega ? " mega" : "");
   $("npText").textContent = e.ev.txt;
   const go = $("npGo");
   if(sym === "ALL"){
