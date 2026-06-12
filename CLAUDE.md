@@ -21,11 +21,11 @@ The inline `<script>` in `index.html` is organized into commented sections (`/* 
 
 ### Core design: deterministic pre-generated market
 
-The fairness guarantee of the game depends on one idea: the full market (all price paths and all news events) is generated **up front** in `genMarket(seed, ticks)` before round 1 starts, using a seeded PRNG (`mulberry32`). Both rounds then merely *replay* this same data via `tick()` (one tick every `TICK_MS` = 700 ms). Consequences when editing:
+The fairness guarantee of the game depends on one idea: the full market (all price paths and all news events) is generated **up front** in `genMarket(seed, ticks)` before round 1 starts, using a seeded PRNG (`mulberry32`). Both rounds then merely *replay* this same data via `tick()` (one tick every `TICK_MS` = 1000 ms; pool data is calibrated for 700 ms ticks and rescaled via `TICK_SCALE`). Consequences when editing:
 
 - Anything random that affects prices or news must use the seeded `rnd()` inside `genMarket`, never `Math.random()`, or the two rounds diverge and the duel becomes unfair.
 - `price(sym)` is just an index lookup into `market.paths[sym][tickCount]`; live game code never mutates prices.
-- News events carry a `jump` (immediate price shock) and a `drift` over `dur` ticks; both are applied during generation, and the event list is replayed at the matching tick to show the news popup/feed.
+- News events carry a `jump` (price shock) and a `drift` over `dur` ticks. The event is *displayed* at its `tick`, but the jump and drift only hit the price `REACT_TICKS` (~8 s) later — that reaction window is the point; don't apply effects at the display tick.
 - The 6-digit game code (`gameCode`) *is* the market seed: entering the same code on another device reproduces the identical game. `code % 3` encodes the duration (5/10/15 min via `DURATIONS`), so seed and tick count always match across devices. Don't change `genMarket`'s consumption order of `rnd()` casually — it would silently change what every shared code produces.
 - Creating a game opens a lobby overlay; round 1 starts automatically at the *second-next* full wall-clock minute (`openLobby`). Devices that create/join with the same code within the same minute therefore start simultaneously without any server.
 
@@ -33,6 +33,6 @@ The fairness guarantee of the game depends on one idea: the full market (all pri
 
 - There are two game modes, chosen on the start screen and held in `mode`. **`"local"`** is the original pass-and-play: `players` has both entries, round 1 → handover overlay → round 2 → `showResult()` compares the two with a crown. **`"remote"`** is one player per device coupled only by the shared code: `players` has a single entry, the match runs exactly one round, and `endRound()` calls `showResultSolo()` (own P&L only — the two devices compare manually). Most match code keys off `mode`; remote always has `round === 0`.
 - Player state lives in the `players` array (cash, positions with average entry price, result). `round` indexes the active player.
-- The breaking-news popup pauses the game (`newsPaused`) until the player reacts — gameplay time only advances via `tickCount`, so all timing logic should be tick-based, not wall-clock-based.
+- Game-time differs per mode: **local** is tick-based — the pause button and the breaking-news popup (`newsPaused`) halt `tickCount`. **remote** is wall-clock-anchored — `tick()` derives `tickCount` from `Date.now() - roundAnchor` (where `roundAnchor === startAt` from the lobby), there is no pause button, popups don't block (they auto-close), and skipped ticks are caught up after tab sleep. Anything that must stay in sync across devices has to key off this anchored `tickCount`.
 - The chart is hand-drawn on a `<canvas>` in `drawChart()` (rolling ~3-minute window, devicePixelRatio-aware).
 - `sw.js` uses a network-first/cache-fallback strategy with cache name `spcx-duell-v1`. When changing cached assets in a way that must reach installed PWAs, bump the `CACHE` version string, and keep the `FILES` list in sync with any added/renamed assets.

@@ -189,7 +189,8 @@
   .np-sym{margin-left:auto;font-family:var(--mono);font-size:11px;font-weight:700;
           padding:3px 8px;border-radius:6px;background:var(--panel-2);border:1px solid var(--line)}
   .np-sym.up{color:var(--up)} .np-sym.down{color:var(--down)} .np-sym.neutral{color:var(--muted)}
-  .np-text{font-size:15px;line-height:1.5;margin:12px 0 16px;font-weight:600}
+  .np-text{font-size:15px;line-height:1.5;margin:12px 0 6px;font-weight:600}
+  .np-hint{font-family:var(--mono);font-size:11px;color:var(--muted);margin-bottom:14px}
   .np-btns{display:flex;gap:8px}
   .np-btn{flex:1;height:46px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer}
   .np-go{border:none;background:var(--accent);color:#1A1206}
@@ -372,6 +373,7 @@
       <span class="np-sym" id="npSym"></span>
     </div>
     <div class="np-text" id="npText"></div>
+    <div class="np-hint">⏳ Der Markt reagiert in wenigen Sekunden …</div>
     <div class="np-btns">
       <button class="np-btn np-go" id="npGo"></button>
       <button class="np-btn np-skip" id="npSkip">Ignorieren</button>
@@ -384,14 +386,20 @@
 
 /* ====================== Konfiguration ====================== */
 const START_CASH = 25000;
-const TICK_MS = 700;
+const TICK_MS = 1000;
+/* Pool-Daten (dur, Event-Abstände, Drift pro Tick) sind auf 0,7-s-Ticks kalibriert –
+   dieser Faktor rechnet sie auf die aktuelle Tick-Länge um, damit alles in
+   Sekunden gemessen gleich bleibt */
+const TICK_SCALE = 700 / TICK_MS;
+/* Vorlauf zwischen News-Anzeige und Kursreaktion: Zeit zum Reagieren */
+const REACT_TICKS = Math.round(8000 / TICK_MS);
 
 /* Drift ~neutral: Aktien können im Plus UND im Minus enden – nur SPCX hat minimal IPO-Rückenwind */
 const STOCK_DEFS = {
-  SPCX:{name:"SpaceX",     start:135.00, sigma:0.0020, drift:0.00001},
-  TSLA:{name:"Tesla",      start:312.40, sigma:0.0010, drift:0},
-  NVDA:{name:"NVIDIA",     start:176.80, sigma:0.0009, drift:0},
-  RKLB:{name:"Rocket Lab", start:38.65,  sigma:0.0013, drift:0},
+  SPCX:{name:"SpaceX",     start:135.00, sigma:0.0015,  drift:0.00001},
+  TSLA:{name:"Tesla",      start:312.40, sigma:0.00075, drift:0},
+  NVDA:{name:"NVIDIA",     start:176.80, sigma:0.0007,  drift:0},
+  RKLB:{name:"Rocket Lab", start:38.65,  sigma:0.0010,  drift:0},
 };
 
 /* News: kleinere Sprünge, dafür längere Drift-Phasen → fließendere Bewegungen */
@@ -477,18 +485,24 @@ function genMarket(seed, ticks){
     prices[sym] = d.start;
   }
   let effects = [];
+  let pendingJumps = [];
   let lastIdx = -1;
-  let nextEvent = 30 + Math.floor(rnd()*40);
+  let nextEvent = Math.round((30 + Math.floor(rnd()*40)) * TICK_SCALE);
 
-  /* Event auslösen: Sprung + Drift anwenden und für die Wiedergabe speichern */
+  /* Event auslösen: News erscheint bei Tick i, der Kurs reagiert erst
+     REACT_TICKS später – so bleibt Zeit, auf die Meldung zu reagieren.
+     Die rnd()-Aufrufe passieren trotzdem hier, damit die PRNG-Reihenfolge
+     deterministisch bleibt. */
   function fire(i, ev, sym){
+    const dur = Math.round(ev.dur * TICK_SCALE);
     const resolved = {t:sym, txt:ev.txt.replace("%SYM%", sym),
-                      jump:ev.jump, drift:ev.drift, dur:ev.dur};
+                      jump:ev.jump, drift:ev.drift, dur};
     const targets = sym === "ALL" ? Object.keys(prices) : [sym];
+    const hits = i + REACT_TICKS;
     for(const s of targets){
-      if(resolved.jump) prices[s] = Math.max(1, prices[s] * (1 + resolved.jump * (0.85 + rnd()*0.3)));
+      if(resolved.jump) pendingJumps.push({at:hits, sym:s, factor: 1 + resolved.jump * (0.85 + rnd()*0.3)});
     }
-    if(resolved.drift) effects.push({sym, drift:resolved.drift, until:i + resolved.dur});
+    if(resolved.drift) effects.push({sym, drift:resolved.drift * TICK_SCALE, from:hits, until:hits + dur});
     events.push({tick:i, ev:resolved, tag: resolved.jump > 0 ? "up" : resolved.jump < 0 ? "down" : "neutral"});
   }
 
@@ -499,7 +513,8 @@ function genMarket(seed, ticks){
     if(i === 3) fire(i, OPENING_EVENT, "SPCX");
 
     // Zufalls-News: ~50% Momentum-News über die gerade "beliebte" Aktie, sonst klassische News
-    if(i === nextEvent && i < ticks - 15){
+    // Spätgrenze so, dass der verzögerte Kurssprung noch vor Spielende passiert
+    if(i === nextEvent && i < ticks - (REACT_TICKS + 12)){
       if(rnd() < 0.5){
         let best = null, bestScore = -1;
         for(const sym of Object.keys(prices)){
@@ -519,15 +534,21 @@ function genMarket(seed, ticks){
         const ev = NEWS_POOL[idx];
         fire(i, ev, ev.t);
       }
-      nextEvent = i + 60 + Math.floor(rnd()*55);
+      nextEvent = i + Math.round((60 + Math.floor(rnd()*55)) * TICK_SCALE);
     }
+
+    // Fällige News-Sprünge (REACT_TICKS nach der Meldung) anwenden
+    for(const j of pendingJumps){
+      if(j.at === i) prices[j.sym] = Math.max(1, prices[j.sym] * j.factor);
+    }
+    pendingJumps = pendingJumps.filter(j => j.at > i);
 
     effects = effects.filter(e => e.until > i);
 
     for(const [sym,d] of Object.entries(STOCK_DEFS)){
-      let drift = d.drift;
+      let drift = d.drift * TICK_SCALE;
       for(const e of effects){
-        if(e.sym === sym || e.sym === "ALL") drift += e.drift;
+        if(e.from <= i && (e.sym === sym || e.sym === "ALL")) drift += e.drift;
       }
       let sig = d.sigma;
       if(sym === "SPCX" && i < ticks*0.12) sig *= 1.6;
@@ -542,6 +563,9 @@ function genMarket(seed, ticks){
 /* ====================== State ====================== */
 let players, round, selected, qtyMode;
 let tickCount, matchTicks, paused, over, timer;
+/* Zeitanker der laufenden Runde: remote = gemeinsamer Lobby-Start (startAt),
+   local = Rundenbeginn. Nur im Remote-Modus spielbestimmend. */
+let roundAnchor = 0;
 
 /* Spielmodus: "local" = beide nacheinander auf einem Gerät (Pass & Play),
    "remote" = ein Spieler pro Gerät, gekoppelt über den Spiel-Code. */
@@ -712,6 +736,9 @@ function startRound(r){
   $("news").innerHTML = '<div class="empty">Gleich geht\'s los …</div>';
   $("flash").textContent = "";
   $("pauseBtn").textContent = "⏸ Pause";
+  // Remote läuft strikt nach Weltzeit – keine Pause möglich
+  $("pauseBtn").style.display = mode === "remote" ? "none" : "";
+  roundAnchor = mode === "remote" ? startAt : Date.now();
   $("roundTag").textContent = mode === "remote"
     ? `Code ${String(gameCode).padStart(6,"0")}`
     : `Runde ${r+1}/2`;
@@ -741,7 +768,30 @@ function price(sym){ return market.paths[sym][Math.min(tickCount, matchTicks)]; 
 function open_(sym){ return STOCK_DEFS[sym].start; }
 
 function tick(){
-  if(paused || newsPaused || over) return;
+  if(over) return;
+
+  if(mode === "remote"){
+    /* Weltzeit-Anker: Spielzeit hängt nur an der Uhr, nie an Pausen oder
+       Render-Aussetzern. Beide Geräte (gleicher startAt aus der Lobby)
+       bleiben dadurch dauerhaft synchron; nach Tab-Schlaf wird aufgeholt. */
+    const target = Math.min(matchTicks, Math.floor((Date.now() - roundAnchor) / TICK_MS));
+    while(tickCount < target){
+      tickCount++;
+      for(const e of market.events){
+        if(e.tick === tickCount){
+          pushNews(e.ev.t, e.ev.txt, e.tag);
+          // Popup nur für frische Events, kein Popup-Stau nach Catch-up
+          if(e.tick === target) showNewsPop(e);
+        }
+      }
+    }
+    if(tickCount >= matchTicks){ endRound(); return; }
+    renderAll();
+    return;
+  }
+
+  // Local (Pass & Play): tick-basiert, Pause und News-Popup halten an
+  if(paused || newsPaused) return;
   tickCount++;
 
   for(const e of market.events){
@@ -755,9 +805,14 @@ function tick(){
   renderAll();
 }
 
-/* Breaking-News-Popup: pausiert das Spiel bis zur Entscheidung */
+/* Breaking-News-Popup. Local: pausiert das Spiel bis zur Entscheidung.
+   Remote: Spiel läuft weiter, Popup schließt nach ein paar Sekunden selbst. */
+let npTimer = null;
+
 function showNewsPop(e){
-  newsPaused = true;
+  if(mode === "local") newsPaused = true;
+  clearTimeout(npTimer);
+  if(mode === "remote") npTimer = setTimeout(closeNewsPop, 6000);
   const sym = e.ev.t;
   $("npSym").textContent = sym === "ALL" ? "MARKT" : sym;
   $("npSym").className = "np-sym " + e.tag;
@@ -781,6 +836,7 @@ function showNewsPop(e){
 }
 
 function closeNewsPop(){
+  clearTimeout(npTimer);
   $("newsPop").classList.remove("show");
   newsPaused = false;
   renderAll();
