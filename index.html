@@ -161,7 +161,8 @@
            align-items:center;justify-content:center;padding:20px;z-index:50}
   .overlay.show{display:flex}
   .modal{background:var(--panel);border:1px solid var(--accent);border-radius:16px;
-         padding:26px 22px;max-width:430px;width:100%;text-align:center}
+         padding:26px 22px;max-width:430px;width:100%;text-align:center;
+         max-height:92vh;overflow-y:auto}
   .modal h3{font-size:22px;margin:6px 0 4px}
   .modal .sub{font-size:14px;color:var(--muted);margin-bottom:16px;line-height:1.5}
   .handover-pnl{font-family:var(--mono);font-size:26px;font-weight:800;margin:10px 0 4px}
@@ -174,6 +175,17 @@
   .res-badge{font-family:var(--mono);font-size:12px;color:var(--accent);font-weight:700;margin-top:8px}
   .res-stats{font-family:var(--mono);font-size:10.5px;color:var(--muted);margin-top:5px;line-height:1.6}
   .crown{font-size:18px}
+
+  /* ============ Analyse (Endauswertung) ============ */
+  .ana{margin-top:14px;border:1px solid var(--line);border-radius:12px;background:var(--panel-2);
+       padding:10px 12px;text-align:left;max-height:42vh;overflow-y:auto}
+  .ana h4{font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;
+          color:var(--muted);margin:0 0 6px;text-align:center}
+  .ana table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px}
+  .ana th{font-size:10px;font-weight:700;text-align:right;padding:2px;letter-spacing:0;text-transform:none}
+  .ana td{padding:4.5px 2px;border-top:1px solid var(--line);text-align:right;font-size:11px}
+  .ana td:first-child{text-align:left;color:var(--muted)}
+  .ana .bh-note{font-size:10.5px;color:var(--muted);margin-top:8px;text-align:center;font-family:var(--mono)}
   .modal .start-btn{margin-top:20px;height:48px}
 
   /* ============ News-Popup (Breaking News) ============ */
@@ -362,16 +374,15 @@
         <div class="res-pnl" id="resPnl1"></div>
         <div class="res-total" id="resTot1"></div>
         <div class="res-badge" id="resBadge1"></div>
-        <div class="res-stats" id="resStats1"></div>
       </div>
       <div class="res-card" id="resCard2">
         <div class="res-name"><span class="dot" style="background:var(--p2)"></span><span id="resName2"></span> <span class="crown" id="crown2"></span></div>
         <div class="res-pnl" id="resPnl2"></div>
         <div class="res-total" id="resTot2"></div>
         <div class="res-badge" id="resBadge2"></div>
-        <div class="res-stats" id="resStats2"></div>
       </div>
     </div>
+    <div class="ana" id="analysis"></div>
     <div class="code-badge">Spiel-Code: <b id="resCode"></b></div>
     <button class="start-btn" id="rematchBtn">Revanche</button>
   </div>
@@ -724,7 +735,9 @@ function buildMarket(){
 
 function newPlayer(name, color){
   return {name, cash:START_CASH, pos:{}, color, result:null,
-          stats:{trades:0, volume:0, best:null, worst:null, allIns:0, newsTrades:0, investedTicks:0, peak:START_CASH}};
+          stats:{trades:0, buys:0, sells:0, volume:0, realized:0, best:null, worst:null,
+                 allIns:0, newsTrades:0, investedTicks:0, perSym:{},
+                 peak:START_CASH, trough:START_CASH, maxDD:0}};
 }
 
 $("startBtn").onclick = () => {
@@ -886,11 +899,13 @@ function processTick(showPopup){
       if(showPopup) showNewsPop({ev:{t:t.sym, txt:"🤫 " + insiderText(t)}, tag:t.dir > 0 ? "up" : "down", insider:true});
     }
   }
-  // Statistik: investierte Zeit und Depot-Spitze
-  const p = players[round];
-  if(Object.keys(p.pos).length) p.stats.investedTicks++;
+  // Statistik: investierte Zeit, Depot-Spitze/-Tief, max. Rücksetzer
+  const p = players[round], s = p.stats;
+  if(Object.keys(p.pos).length) s.investedTicks++;
   const tv = totalOf(p);
-  if(tv > p.stats.peak) p.stats.peak = tv;
+  if(tv > s.peak) s.peak = tv;
+  if(tv < s.trough) s.trough = tv;
+  if(s.peak - tv > s.maxDD) s.maxDD = s.peak - tv;
 }
 
 function tick(){
@@ -966,9 +981,11 @@ function curQty(){
 }
 
 /* Statistik je Order: Anzahl, Volumen, All-ins, Trades kurz nach News */
-function noteTrade(p, value){
+function noteTrade(p, value, side){
   const s = p.stats;
   s.trades++; s.volume += value;
+  side === "buy" ? s.buys++ : s.sells++;
+  s.perSym[selected] = (s.perSym[selected] || 0) + 1;
   if(qtyMode === "max") s.allIns++;
   if(tickCount - lastNewsTick <= Math.round(12000 / TICK_MS)) s.newsTrades++;
 }
@@ -988,7 +1005,7 @@ function trade(side){
     pos.avg = (pos.avg*pos.qty + cost) / (pos.qty + qty);
     pos.qty += qty;
     p.pos[selected] = pos;
-    noteTrade(p, cost);
+    noteTrade(p, cost, "buy");
     flash.textContent = `Gekauft: ${qty} × ${selected} @ ${fmt(px)}`;
     flash.className = "flash ok";
   }else{
@@ -1001,7 +1018,8 @@ function trade(side){
     p.cash += sellQty * px;
     pos.qty -= sellQty;
     if(pos.qty === 0) delete p.pos[selected];
-    noteTrade(p, sellQty * px);
+    noteTrade(p, sellQty * px, "sell");
+    p.stats.realized += profit;
     p.stats.best  = p.stats.best  === null ? profit : Math.max(p.stats.best,  profit);
     p.stats.worst = p.stats.worst === null ? profit : Math.min(p.stats.worst, profit);
     flash.textContent = `Verkauft: ${sellQty} × ${selected} @ ${fmt(px)}`;
@@ -1312,6 +1330,50 @@ function statsLine(p){
   return out;
 }
 
+/* ====================== Analyse (ausführliche Endauswertung) ====================== */
+/* Benchmark: Was hätte stures Kaufen-und-Halten von SPCX gebracht? */
+function buyHoldPnl(){
+  const px0 = STOCK_DEFS.SPCX.start;
+  const qty = Math.floor(START_CASH / px0);
+  return (START_CASH - qty*px0) + qty * market.paths.SPCX[matchTicks] - START_CASH;
+}
+
+function favSym(p){
+  const e = Object.entries(p.stats.perSym).sort((a,b) => b[1] - a[1]);
+  return e.length ? `${e[0][0]} (${e[0][1]}×)` : "–";
+}
+
+const pctf = x => (x >= 0 ? "+" : "") + (x*100).toLocaleString("de-DE",{minimumFractionDigits:2,maximumFractionDigits:2}) + " %";
+
+function buildAnalysis(list){
+  const bh = buyHoldPnl();
+  const col = v => v >= 0 ? "var(--up)" : "var(--down)";
+  const rows = [
+    ["Rendite",            p => `<span style="color:${col(p.result.pnl)}">${pctf(p.result.pnl/START_CASH)}</span>`],
+    ["Käufe / Verkäufe",   p => `${p.stats.buys} / ${p.stats.sells}`],
+    ["Handelsvolumen",     p => fmt(p.stats.volume)],
+    ["Realisierte Gewinne",p => `<span style="color:${col(p.stats.realized)}">${sgn(p.stats.realized)}</span>`],
+    ["Bester Deal",        p => p.stats.best  === null ? "–" : `<span style="color:${col(p.stats.best)}">${sgn(p.stats.best)}</span>`],
+    ["Schwächster Deal",   p => p.stats.worst === null ? "–" : `<span style="color:${col(p.stats.worst)}">${sgn(p.stats.worst)}</span>`],
+    ["Depot-Spitze",       p => fmt(p.stats.peak)],
+    ["Depot-Tief",         p => fmt(p.stats.trough)],
+    ["Max. Rücksetzer",    p => p.stats.maxDD < 0.005 ? "–" : "−" + fmt(p.stats.maxDD)],
+    ["Investierte Zeit",   p => Math.round(p.stats.investedTicks / matchTicks * 100) + " %"],
+    ["Lieblingsaktie",     p => favSym(p)],
+    ["Trades nach News",   p => p.stats.newsTrades],
+    ["Markt geschlagen",   p => p.result.pnl > bh ? "✅ Ja" : "❌ Nein"],
+  ];
+  let html = '<h4>📊 Analyse</h4><table>';
+  if(list.length > 1){
+    html += `<tr><th></th>${list.map(p => `<th style="color:${p.color}">${p.name}</th>`).join("")}</tr>`;
+  }
+  for(const [label, fn] of rows){
+    html += `<tr><td>${label}</td>${list.map(p => `<td>${fn(p)}</td>`).join("")}</tr>`;
+  }
+  html += `</table><div class="bh-note">Benchmark: Buy &amp; Hold SPCX hätte ${sgn(bh)} gebracht.</div>`;
+  $("analysis").innerHTML = html;
+}
+
 /* Remote: nur das eigene Ergebnis – verglichen wird manuell übers Gerät hinweg */
 function showResultSolo(p){
   $("resTitle").textContent = "Geschafft!";
@@ -1322,6 +1384,7 @@ function showResultSolo(p){
   $("resCard1").classList.remove("win");
   $("resCard2").style.display = "none";
   setRes("1", p);
+  buildAnalysis([p]);
   $("resCode").textContent = String(gameCode).padStart(6,"0");
   $("rematchBtn").textContent = "Neues Spiel";
   $("overlay").classList.add("show");
@@ -1335,6 +1398,7 @@ function showResult(){
   $("resName1").textContent = players[0].name;
   $("resName2").textContent = players[1].name;
   setRes("1", players[0]); setRes("2", players[1]);
+  buildAnalysis([players[0], players[1]]);
 
   const diff = Math.abs(r1.pnl - r2.pnl);
   if(diff < 0.005){
@@ -1362,7 +1426,6 @@ function setRes(i, p){
   el.style.color = r.pnl >= 0 ? "var(--up)" : "var(--down)";
   $("resTot"+i).textContent = "Endwert " + fmt(r.total);
   $("resBadge"+i).textContent = playerTitle(p);
-  $("resStats"+i).innerHTML = statsLine(p);
 }
 
 /* ====================== Steuerung ====================== */
