@@ -1451,6 +1451,7 @@ function startRound(r){
   $("pauseBtn").textContent = "⏸ Pause";
   // Remote läuft strikt nach Weltzeit – keine Pause möglich; im Tutorial pausiert der Coach
   $("pauseBtn").style.display = (mode === "remote" || tutorial) ? "none" : "";
+  $("openStocks").style.display = tutorial ? "none" : ""; // Aktien-Overlay ist nicht Teil des Tutorials
   $("endSandboxBtn").style.display = sandbox ? "" : "none";
   roundAnchor = mode === "remote" ? startAt : Date.now();
   $("roundTag").textContent = tutorial
@@ -2487,9 +2488,11 @@ function genTutorialMarket(){
   };
   const paths = {}, prices = {};
   for(const [sym,d] of Object.entries(STOCK_DEFS)){ paths[sym] = [d.start]; prices[sym] = d.start; }
+  // Nicht eigens gescriptete Aktien (die Big-Tech-Werte) laufen ruhig im Hintergrund
+  const QUIET = {sigma:0.0006, jumps:{}, drift:() => 0};
   for(let i = 1; i <= TUT_TICKS; i++){
     for(const sym of Object.keys(STOCK_DEFS)){
-      const sc = script[sym];
+      const sc = script[sym] || QUIET;
       if(sc.jumps[i]) prices[sym] *= 1 + sc.jumps[i];
       const sig = sc.sigma;
       prices[sym] = Math.max(1, prices[sym] * Math.exp(sc.drift(i) - sig*sig/2 + sig*g()));
