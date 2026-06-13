@@ -604,7 +604,8 @@ const OPENING_EVENT = {t:"SPCX",
    newsMult wird hier nicht angewendet, damit die Größenordnung planbar bleibt.
    Bewusst NICHT in den Insider-Tipps: Mega-Events bleiben unangekündigt. */
 const MEGA_REACT_TICKS = Math.round(20000 / TICK_MS);
-const MEGA_PRE_FRAC = 0.2; // Anteil der Mega-Bewegung, der als Vor-Beben vorab hereinkriecht
+const MEGA_PRE_FRAC = 0.2;  // Anteil der Mega-Bewegung, der als Vor-Beben vorab hereinkriecht
+const MEGA_FADE_FRAC = 0.65; // Anteil der Mega-Bewegung, der nach dem Hoch wieder abgegeben wird
 const MEGA_POOL = [
   {t:"SPCX", txt:"💥 MEGA: Jahrhundert-Auftrag! Regierung lässt SpaceX die Mond-Basis bauen.", jump:+0.30, drift:+0.0008, dur:40},
   {t:"TSLA", txt:"💥 MEGA: Durchbruch! Teslas neuer Akku lädt in 90 Sekunden voll.",            jump:+0.28, drift:+0.0008, dur:40},
@@ -775,17 +776,33 @@ function genMarket(seed, ticks){
      spürbares Warnsignal im Kurs, das aufmerksame Trader rechtzeitig
      aussteigen (vor dem Crash) bzw. eindecken/aufspringen lässt. Der
      Gesamtfaktor bleibt unverändert (preFactor * Rest == factor), nur ein
-     Teil der Bewegung wandert zeitlich nach vorne – kein zusätzliches rnd(). */
+     Teil der Bewegung wandert zeitlich nach vorne – kein zusätzliches rnd().
+     Spike-and-Fade: nach dem Hoch (Ende der Boost-Drift) ebbt ~MEGA_FADE_FRAC
+     der Bewegung langsam (~75 s) wieder ab – der Spike wird so zum echten
+     Verkaufsfenster statt zum neuen Dauerniveau. Reiner Zeit-Anhang, der den
+     bereits gestreuten factor weiterverwendet – kein zusätzliches rnd(). */
   function fireMega(i, ev){
     const dur = Math.round(ev.dur * TICK_SCALE);
     const hits = i + MEGA_REACT_TICKS;
     const targets = ev.t === "ALL" ? Object.keys(prices) : [ev.t];
     const preTicks = Math.max(2, Math.round(MEGA_REACT_TICKS * 0.6));
+    const fadeStart = hits + dur;                            // Plateau nach der Boost-Drift
+    let fadeTicks = Math.round(75000 / TICK_MS);             // langsames Abebben
+    if(fadeStart < ticks - 4){                               // genug Platz bis Spielende?
+      fadeTicks = Math.min(fadeTicks, ticks - fadeStart);    // späte Megas faden schneller
+    }else{
+      fadeTicks = 0;                                         // kein Platz: kein Fade
+    }
     for(const s of targets){
       const factor = 1 + ev.jump * (0.9 + rnd()*0.2);
       const preFactor = Math.pow(factor, MEGA_PRE_FRAC);
       pushJump(hits - preTicks, s, preFactor, preTicks);     // sanfter Vorlauf
       pushJump(hits, s, factor / preFactor);                 // Hauptschlag (Rest)
+      if(fadeTicks > 1){
+        // Rückkehr auf ~ein Drittel der Bewegung; R = Zielniveau / Sprungniveau
+        const netTarget = 1 + (factor - 1) * (1 - MEGA_FADE_FRAC);
+        pushJump(fadeStart, s, netTarget / factor, fadeTicks);
+      }
     }
     if(ev.drift) effects.push({sym:ev.t, drift:ev.drift * TICK_SCALE, from:hits, until:hits + dur});
     if(ev.t !== "ALL") lastEventSym = ev.t;
