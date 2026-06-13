@@ -258,9 +258,13 @@
     .topbar-in{max-width:1180px}
     #startScreen .wrap{max-width:480px}      /* Formular bleibt schlank zentriert */
     #matchScreen .wrap{max-width:1180px}
-    .match-grid{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:20px;align-items:start}
+    .match-grid{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:20px;align-items:stretch}
     .col-chart{min-width:0}                  /* Chart darf schrumpfen statt zu überlaufen */
     #matchScreen canvas{height:300px}        /* mehr Höhe auf breiten Schirmen (drawChart folgt) */
+    /* rechte Spalte füllt die volle Grid-Höhe; Newsfeed wächst in den freien Rest */
+    .col-side{display:flex;flex-direction:column}
+    .col-side .panel:last-child{flex:1;display:flex;flex-direction:column;min-height:0}
+    .col-side .panel:last-child #news{flex:1;overflow-y:auto;min-height:80px}
   }
 </style>
 </head>
