@@ -121,6 +121,12 @@
   .char-line{font-size:12px;opacity:.85}
   canvas{width:100%;height:190px;display:block;background:var(--panel-2);
          border:1px solid var(--line);border-radius:12px}
+  .chart-bar{display:flex;justify-content:flex-end;margin-bottom:8px}
+  .chart-toggle{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .ctg{padding:5px 12px;background:var(--panel-2);color:var(--muted);border:none;
+       font-family:var(--mono);font-size:12px;cursor:pointer}
+  .ctg+.ctg{border-left:1px solid var(--line)}
+  .ctg.active{background:#1A2340;color:var(--text);font-weight:700}
 
   /* ============ Panels ============ */
   .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-top:14px}
@@ -359,6 +365,12 @@
       <span class="chg" id="qChg"></span>
       <span class="chg ek" id="qEk" style="display:none"></span>
       <span class="qname" id="qName"></span>
+    </div>
+    <div class="chart-bar">
+      <div class="chart-toggle" id="chartToggle">
+        <button class="ctg active" data-cm="line">📈 Linie</button>
+        <button class="ctg" data-cm="candle">📊 Kerzen</button>
+      </div>
     </div>
     <canvas id="chart" height="190"></canvas>
 
@@ -811,6 +823,7 @@ function genMarket(seed, ticks){
 
 /* ====================== State ====================== */
 let players, round, selected, qtyMode;
+let chartMode = "line"; // "line" oder "candle" (Kerzenchart), nur Optik
 let tickCount, matchTicks, paused, over, timer;
 let chartRaf = null, lastTickAt = 0; // für flüssige Chart-Animation (rAF-Loop)
 /* Zeitanker der laufenden Runde: remote = gemeinsamer Lobby-Start (startAt),
@@ -1526,27 +1539,56 @@ function drawChart(){
   const op = open_(selected);
   const p = players[round];
   const pos = p.pos[selected];
+  const path = market.paths[selected];
+
+  const L = 8, R = 46, T = 8, B = 22;       // Innenabstände (rechts Platz für Preis-Labels)
+
+  /* Glatte Animation: der aktuell entstehende Punkt/die offene Kerze wächst
+     innerhalb des Tick-Intervalls herein (0..1). */
+  let prog = 1;
+  if(lastTickAt && tickCount >= 1 && !paused && !newsPaused && !over)
+    prog = Math.min(1, (performance.now() - lastTickAt) / TICK_MS);
 
   /* Rollierendes Fenster: nur die letzten ~3 Minuten zeigen, Anfang abschneiden */
   const WINDOW = Math.round(180000 / TICK_MS);
-  const full = market.paths[selected].slice(0, tickCount + 1);
-  const startIdx = Math.max(0, full.length - WINDOW);
-  const data = full.slice(startIdx);
-
-  /* Glatte Animation: letzter Segment wächst innerhalb des Tick-Intervalls herein */
+  const startIdx = Math.max(0, tickCount + 1 - WINDOW);
+  const data = path.slice(startIdx, tickCount + 1);
   const nPts = data.length;
-  let prog = 1;
-  if(lastTickAt && nPts >= 2 && !paused && !newsPaused && !over)
-    prog = Math.min(1, (performance.now() - lastTickAt) / TICK_MS);
-  const livePrice = nPts >= 2 ? data[nPts-2] + (data[nPts-1] - data[nPts-2]) * prog : (data[0] || 0);
+  const livePrice = nPts >= 2 ? data[nPts-2] + (data[nPts-1] - data[nPts-2]) * prog : (data[0] || op);
 
-  let min = Math.min(...data), max = Math.max(...data);
+  /* --- Kerzen aggregieren (~10 s pro Kerze), wenn der Kerzen-Modus aktiv ist.
+         Die letzte (offene) Kerze nutzt den animierten Live-Kurs als Schluss. --- */
+  const CT = Math.max(2, Math.round(10000 / TICK_MS)); // Ticks pro Kerze
+  let candles = null, visStartTick = startIdx;
+  if(chartMode === "candle"){
+    candles = [];
+    const lastC = Math.floor(tickCount / CT);
+    const firstC = Math.max(0, lastC - Math.ceil(WINDOW / CT) + 1);
+    visStartTick = firstC * CT;
+    for(let c = firstC; c <= lastC; c++){
+      const a = c*CT, b = Math.min(c*CT + CT - 1, tickCount);
+      let hi = path[a], lo = path[a];
+      for(let i=a;i<=b;i++){ if(path[i]>hi)hi=path[i]; if(path[i]<lo)lo=path[i]; }
+      const live = c === lastC;
+      const cl = live ? livePrice : path[b];
+      if(live){ if(cl>hi)hi=cl; if(cl<lo)lo=cl; }
+      candles.push({o: path[a], hi, lo, cl, live});
+    }
+  }
+
+  /* --- Skalierung: im Kerzen-Modus über Dochte (High/Low) --- */
+  let min, max;
+  if(candles){
+    min = Infinity; max = -Infinity;
+    for(const k of candles){ if(k.lo<min)min=k.lo; if(k.hi>max)max=k.hi; }
+  }else{
+    min = Math.min(...data); max = Math.max(...data);
+  }
   if(op >= min - (max-min)*0.3 && op <= max + (max-min)*0.3){ min = Math.min(min, op); max = Math.max(max, op); }
   if(pos){ min = Math.min(min, pos.avg); max = Math.max(max, pos.avg); }
   const pad = (max-min)*0.14 || 1;
   min -= pad; max += pad;
 
-  const L = 8, R = 46, T = 8, B = 22;       // Innenabstände (rechts Platz für Preis-Labels)
   const X = i => L + (w-L-R) * (data.length > 1 ? i/(data.length-1) : 0);
   const Y = v => h - B - (h-T-B) * ((v-min)/(max-min));
 
@@ -1563,9 +1605,9 @@ function drawChart(){
   }
 
   /* --- Vertikale Gitterlinien (Zeit, mm:ss, bezogen aufs sichtbare Fenster) --- */
-  const winStartS = startIdx * TICK_MS / 1000;
+  const winStartS = visStartTick * TICK_MS / 1000;
   const winEndS = tickCount * TICK_MS / 1000;
-  if(data.length > 10){
+  if(tickCount - visStartTick > 10){
     const tSteps = 4;
     for(let k = 1; k < tSteps; k++){
       const x = L + (w-L-R) * k/tSteps;
@@ -1587,29 +1629,51 @@ function drawChart(){
 
   /* --- Kursverlauf: Farbe relativ zum Einstand, wenn man Stücke hält
          (bei Short ist unter dem Einstand gut → Logik gedreht) --- */
-  const last = data[data.length-1];
   const ref = pos ? pos.avg : op;
-  const up = pos && pos.qty < 0 ? last <= ref : last >= ref;
+  const up = pos && pos.qty < 0 ? livePrice <= ref : livePrice >= ref;
   const col = up ? "#3DDC97" : "#FF5C72";
-  /* X-Position des animierten letzten Punktes */
+  /* X-Position des animierten letzten Punktes (Linien-Modus) */
   const liveX = nPts >= 2 ? X(nPts-2) + (X(nPts-1) - X(nPts-2)) * prog : X(0);
   const liveY = Y(livePrice);
 
-  ctx.beginPath();
-  for(let i=0;i<nPts;i++){
-    const px = i < nPts-1 ? X(i) : liveX;
-    const py = i < nPts-1 ? Y(data[i]) : liveY;
-    i===0 ? ctx.moveTo(px,py) : ctx.lineTo(px,py);
-  }
-  ctx.strokeStyle = col; ctx.lineWidth = 1.8;
-  ctx.lineJoin = "round"; ctx.lineCap = "round"; ctx.stroke();
+  if(candles){
+    /* --- Kerzen --- */
+    const NC = candles.length;
+    const slot = (w-L-R) / Math.max(NC, 1);
+    const cw = Math.max(2, Math.min(slot*0.62, 13));
+    for(let i=0;i<NC;i++){
+      const k = candles[i];
+      const cx = L + slot*(i+0.5);
+      const kUp = k.cl >= k.o;
+      const kCol = kUp ? "#3DDC97" : "#FF5C72";
+      ctx.strokeStyle = kCol; ctx.fillStyle = kCol; ctx.lineWidth = 1;
+      /* Docht (High–Low) */
+      ctx.beginPath(); ctx.moveTo(cx, Y(k.hi)); ctx.lineTo(cx, Y(k.lo)); ctx.stroke();
+      /* Körper (Open–Close); offene Kerze leicht transparent */
+      const yo = Y(k.o), yc = Y(k.cl);
+      const top = Math.min(yo, yc), bh = Math.max(1, Math.abs(yc - yo));
+      ctx.globalAlpha = k.live ? 0.65 : 1;
+      ctx.fillRect(cx - cw/2, top, cw, bh);
+      ctx.globalAlpha = 1;
+    }
+  }else{
+    /* --- Linie --- */
+    ctx.beginPath();
+    for(let i=0;i<nPts;i++){
+      const px = i < nPts-1 ? X(i) : liveX;
+      const py = i < nPts-1 ? Y(data[i]) : liveY;
+      i===0 ? ctx.moveTo(px,py) : ctx.lineTo(px,py);
+    }
+    ctx.strokeStyle = col; ctx.lineWidth = 1.8;
+    ctx.lineJoin = "round"; ctx.lineCap = "round"; ctx.stroke();
 
-  /* Fläche unter der Kurve */
-  ctx.lineTo(liveX, h-B); ctx.lineTo(L, h-B); ctx.closePath();
-  const g = ctx.createLinearGradient(0,T,0,h-B);
-  g.addColorStop(0, up ? "rgba(61,220,151,.16)" : "rgba(255,92,114,.16)");
-  g.addColorStop(1, "rgba(0,0,0,0)");
-  ctx.fillStyle = g; ctx.fill();
+    /* Fläche unter der Kurve */
+    ctx.lineTo(liveX, h-B); ctx.lineTo(L, h-B); ctx.closePath();
+    const g = ctx.createLinearGradient(0,T,0,h-B);
+    g.addColorStop(0, up ? "rgba(61,220,151,.16)" : "rgba(255,92,114,.16)");
+    g.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = g; ctx.fill();
+  }
 
   /* --- Einstandslinie des aktiven Spielers --- */
   if(pos){
@@ -1627,8 +1691,8 @@ function drawChart(){
     ctx.font = "10px ui-monospace,monospace";
   }
 
-  /* --- Letzter Kurs: Punkt folgt der Animation, Preis-Tag am rechten Rand --- */
-  ctx.beginPath(); ctx.arc(liveX,liveY,3.2,0,7); ctx.fillStyle = col; ctx.fill();
+  /* --- Letzter Kurs: Punkt (nur Linie) folgt der Animation, Preis-Tag am rechten Rand --- */
+  if(!candles){ ctx.beginPath(); ctx.arc(liveX,liveY,3.2,0,7); ctx.fillStyle = col; ctx.fill(); }
   ctx.fillStyle = col;
   ctx.fillRect(w-R+2, liveY-7, R-4, 14);
   ctx.fillStyle = "#0B1020";
@@ -2145,6 +2209,12 @@ document.querySelectorAll(".chip").forEach(c => c.onclick = () => {
   qtyMode = c.dataset.q;
   document.querySelectorAll(".chip").forEach(x => x.classList.toggle("active", x === c));
   renderAll();
+});
+/* Chart-Ansicht umschalten (Linie/Kerzen) – reine Optik, kein Spieleinfluss */
+document.querySelectorAll(".ctg").forEach(b => b.onclick = () => {
+  chartMode = b.dataset.cm;
+  document.querySelectorAll(".ctg").forEach(x => x.classList.toggle("active", x === b));
+  if(market) drawChart();
 });
 window.addEventListener("resize", () => { if(market) drawChart(); });
 
