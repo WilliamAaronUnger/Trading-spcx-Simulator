@@ -812,6 +812,7 @@ function genMarket(seed, ticks){
 /* ====================== State ====================== */
 let players, round, selected, qtyMode;
 let tickCount, matchTicks, paused, over, timer;
+let chartRaf = null, lastTickAt = 0; // für flüssige Chart-Animation (rAF-Loop)
 /* Zeitanker der laufenden Runde: remote = gemeinsamer Lobby-Start (startAt),
    local = Rundenbeginn. Nur im Remote-Modus spielbestimmend. */
 let roundAnchor = 0;
@@ -1131,6 +1132,8 @@ function startRound(r){
 
   clearInterval(timer);
   timer = setInterval(tick, TICK_MS);
+  lastTickAt = performance.now();
+  startChartLoop();
   saveSnapshot("play");
   renderAll();
 }
@@ -1176,6 +1179,7 @@ function processTick(showPopup){
 
 function tick(){
   if(over) return;
+  lastTickAt = performance.now();
 
   if(mode === "remote"){
     /* Weltzeit-Anker: Spielzeit hängt nur an der Uhr, nie an Pausen oder
@@ -1490,6 +1494,15 @@ function renderAll(){
   drawChart();
 }
 
+/* rAF-Loop für flüssige Chart-Animation (60 fps, interpoliert letzten Punkt) */
+function startChartLoop(){
+  if(chartRaf) return;
+  (function loop(){ drawChart(); chartRaf = requestAnimationFrame(loop); })();
+}
+function stopChartLoop(){
+  if(chartRaf){ cancelAnimationFrame(chartRaf); chartRaf = null; }
+}
+
 /* "Schöne" Schrittweite für Gitterlinien (1-2-5-Raster) */
 function niceStep(range, targetLines){
   const raw = range / targetLines;
@@ -1519,6 +1532,13 @@ function drawChart(){
   const full = market.paths[selected].slice(0, tickCount + 1);
   const startIdx = Math.max(0, full.length - WINDOW);
   const data = full.slice(startIdx);
+
+  /* Glatte Animation: letzter Segment wächst innerhalb des Tick-Intervalls herein */
+  const nPts = data.length;
+  let prog = 1;
+  if(lastTickAt && nPts >= 2 && !paused && !newsPaused && !over)
+    prog = Math.min(1, (performance.now() - lastTickAt) / TICK_MS);
+  const livePrice = nPts >= 2 ? data[nPts-2] + (data[nPts-1] - data[nPts-2]) * prog : (data[0] || 0);
 
   let min = Math.min(...data), max = Math.max(...data);
   if(op >= min - (max-min)*0.3 && op <= max + (max-min)*0.3){ min = Math.min(min, op); max = Math.max(max, op); }
@@ -1571,15 +1591,21 @@ function drawChart(){
   const ref = pos ? pos.avg : op;
   const up = pos && pos.qty < 0 ? last <= ref : last >= ref;
   const col = up ? "#3DDC97" : "#FF5C72";
+  /* X-Position des animierten letzten Punktes */
+  const liveX = nPts >= 2 ? X(nPts-2) + (X(nPts-1) - X(nPts-2)) * prog : X(0);
+  const liveY = Y(livePrice);
+
   ctx.beginPath();
-  for(let i=0;i<data.length;i++){
-    i===0 ? ctx.moveTo(X(i),Y(data[i])) : ctx.lineTo(X(i),Y(data[i]));
+  for(let i=0;i<nPts;i++){
+    const px = i < nPts-1 ? X(i) : liveX;
+    const py = i < nPts-1 ? Y(data[i]) : liveY;
+    i===0 ? ctx.moveTo(px,py) : ctx.lineTo(px,py);
   }
   ctx.strokeStyle = col; ctx.lineWidth = 1.8;
-  ctx.lineJoin = "round"; ctx.stroke();
+  ctx.lineJoin = "round"; ctx.lineCap = "round"; ctx.stroke();
 
   /* Fläche unter der Kurve */
-  ctx.lineTo(X(data.length-1), h-B); ctx.lineTo(L, h-B); ctx.closePath();
+  ctx.lineTo(liveX, h-B); ctx.lineTo(L, h-B); ctx.closePath();
   const g = ctx.createLinearGradient(0,T,0,h-B);
   g.addColorStop(0, up ? "rgba(61,220,151,.16)" : "rgba(255,92,114,.16)");
   g.addColorStop(1, "rgba(0,0,0,0)");
@@ -1601,14 +1627,13 @@ function drawChart(){
     ctx.font = "10px ui-monospace,monospace";
   }
 
-  /* --- Letzter Kurs: Punkt + Preis-Tag am rechten Rand --- */
-  const lx = X(data.length-1), ly = Y(last);
-  ctx.beginPath(); ctx.arc(lx,ly,3.2,0,7); ctx.fillStyle = col; ctx.fill();
+  /* --- Letzter Kurs: Punkt folgt der Animation, Preis-Tag am rechten Rand --- */
+  ctx.beginPath(); ctx.arc(liveX,liveY,3.2,0,7); ctx.fillStyle = col; ctx.fill();
   ctx.fillStyle = col;
-  ctx.fillRect(w-R+2, ly-7, R-4, 14);
+  ctx.fillRect(w-R+2, liveY-7, R-4, 14);
   ctx.fillStyle = "#0B1020";
   ctx.font = "bold 10px ui-monospace,monospace";
-  ctx.fillText(last.toFixed(2), w-R+6, ly+3);
+  ctx.fillText(livePrice.toFixed(2), w-R+6, liveY+3);
 }
 
 /* ====================== News-Feed ====================== */
@@ -1640,6 +1665,7 @@ function replayNewsUpTo(tc){
 function endRound(){
   over = true;
   clearInterval(timer);
+  stopChartLoop();
   tickCount = matchTicks;
   renderAll();
   const p = players[round];
