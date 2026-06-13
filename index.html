@@ -448,7 +448,7 @@
     </div>
 
     <div class="col-side">
-    <div class="panel">
+    <div class="panel" id="depotPanel">
       <h2>Depot · <span id="depName"></span></h2>
       <div class="stats">
         <div class="stat"><div class="lbl">Bargeld</div><div class="val" id="cash"></div></div>
@@ -1451,7 +1451,6 @@ function startRound(r){
   $("pauseBtn").textContent = "⏸ Pause";
   // Remote läuft strikt nach Weltzeit – keine Pause möglich; im Tutorial pausiert der Coach
   $("pauseBtn").style.display = (mode === "remote" || tutorial) ? "none" : "";
-  $("openStocks").style.display = tutorial ? "none" : ""; // Aktien-Overlay ist nicht Teil des Tutorials
   $("endSandboxBtn").style.display = sandbox ? "" : "none";
   roundAnchor = mode === "remote" ? startAt : Date.now();
   $("roundTag").textContent = tutorial
@@ -1755,6 +1754,7 @@ function toggleFav(sym){
   buildWatch();
   buildStockList();
   renderAll();
+  if(tutorial) tutOnFav();
 }
 function buildStockList(){
   const el = $("stockList");
@@ -2460,13 +2460,16 @@ function setRes(i, p, extra){
    (paused), es gibt also keinen Zeitdruck. */
 let tutorial = false, tutStep = 0;
 
-const TUT_TICKS = 150;
+const TUT_TICKS = 170;
 
-/* Drehbuch (Ticks à TICK_MS): sanfter SPCX-Anstieg für den ersten garantierten
-   Gewinn → positive News bei Tick 24 (Kurssprung REACT_TICKS später) →
-   Insider-Tipp bei 44 auf das RKLB-Event bei 64 → Abschluss-Test mit negativer
-   News bei 95. Die Coach-Pausen frieren tickCount ein, daher passen die festen
-   Event-Ticks und der vorberechnete Pfad immer zusammen. */
+/* Drehbuch (Ticks à TICK_MS). Die Coach-Pausen frieren tickCount ein, daher
+   passen die festen Event-Ticks und der vorberechnete Pfad immer zusammen.
+   Ablauf der Beobachtungs-Fenster (Pausen dazwischen verbrauchen keine Ticks):
+   0–20  SPCX-Anstieg (Einstand/Depot/Kerzen, Verkauf bei 20)
+   20–44 SPCX-News bei 26 (Sprung bei 26+R)
+   44–82 Insider-Tipp 48 → RKLB-Event 64 (Sprung 64+R)
+   82–170 Abschluss-Test mit Mega: News 92, Vor-Beben 96/100/104,
+          Hauptschlag bei 110, danach Abebben (Verkaufsfenster). */
 function genTutorialMarket(){
   const rnd = mulberry32(4242);
   const g = () => {
@@ -2477,18 +2480,19 @@ function genTutorialMarket(){
   };
   const R = REACT_TICKS;
   const script = {
-    SPCX:{sigma:0.0008, jumps:{[24+R]:+0.025, [95+R]:-0.028},
-          drift:t => t <= 20 ? +0.0016
-                   : t > 24+R && t <= 24+R+18 ? +0.0009
-                   : t > 95+R && t <= 95+R+18 ? -0.0011 : 0},
-    TSLA:{sigma:0.0007, jumps:{}, drift:() => 0},
-    NVDA:{sigma:0.0005, jumps:{}, drift:() => 0},
+    SPCX:{sigma:0.0008,
+          jumps:{[26+R]:+0.022,                       // positive News (Schritt »News«)
+                 96:+0.012, 100:+0.012, 104:+0.012,   // Mega: Vor-Beben kriecht herein
+                 110:+0.20},                           // Mega: Hauptschlag
+          drift:t => t >= 1  && t <= 20  ? +0.0017     // Aufwärts für Einstand/Depot/Kerzen
+                   : t > 26+R && t <= 26+R+12 ? +0.0008 // sanfter Nachlauf nach der News
+                   : t >= 112 && t <= 152 ? -0.0032 : 0},// Mega ebbt ~zwei Drittel wieder ab
     RKLB:{sigma:0.0009, jumps:{[64+R]:+0.030},
-          drift:t => t > 64+R && t <= 64+R+18 ? +0.0012 : 0},
+          drift:t => t > 64+R && t <= 64+R+16 ? +0.0011 : 0},
   };
   const paths = {}, prices = {};
   for(const [sym,d] of Object.entries(STOCK_DEFS)){ paths[sym] = [d.start]; prices[sym] = d.start; }
-  // Nicht eigens gescriptete Aktien (die Big-Tech-Werte) laufen ruhig im Hintergrund
+  // Nicht eigens gescriptete Aktien (die übrigen Werte) laufen ruhig im Hintergrund
   const QUIET = {sigma:0.0006, jumps:{}, drift:() => 0};
   for(let i = 1; i <= TUT_TICKS; i++){
     for(const sym of Object.keys(STOCK_DEFS)){
@@ -2500,11 +2504,12 @@ function genTutorialMarket(){
     }
   }
   const events = [
-    {tick:24, ev:{t:"SPCX", txt:"NASA vergibt neuen Mond-Auftrag an SpaceX!"}, tag:"up"},
+    {tick:26, ev:{t:"SPCX", txt:"NASA vergibt neuen Mond-Auftrag an SpaceX!"}, tag:"up"},
     {tick:64, ev:{t:"RKLB", txt:"Rocket Lab gewinnt Mega-Vertrag für eine Satelliten-Konstellation!"}, tag:"up"},
-    {tick:95, ev:{t:"SPCX", txt:"Analystenhaus stuft SPCX ab: »Bewertung deutlich zu hoch«."}, tag:"down"},
+    {tick:92, ev:{t:"SPCX", txt:"💥 MEGA: Jahrhundert-Auftrag! Regierung lässt SpaceX die Mond-Basis bauen.",
+                  jump:+0.20, drift:+0.0008, dur:40}, tag:"up", mega:true},
   ];
-  const tips = [{tick:44, eventTick:64, sym:"RKLB", dir:1}];
+  const tips = [{tick:48, eventTick:64, sym:"RKLB", dir:1}];
   return {paths, events, tips};
 }
 
@@ -2512,45 +2517,64 @@ function genTutorialMarket(){
    btn/next = Weiter-Knopf samt Folgeschritt. Aktions-Schritte (2 und 4) werden
    über tutOnTrade weitergeschaltet, Beobachtungs-Phasen über tutOnTick. */
 const TUT_STEPS = {
-  1:{lbl:"Schritt 1/6 · Das Ziel", pause:true, btn:"Los geht's!", next:2,
+  1:{lbl:"Schritt 1/10 · Das Ziel", pause:true, btn:"Los geht's!", next:2,
      text:"🎓 <b>Willkommen beim Trading-Duell!</b> Beide Spieler erleben exakt denselben Markt – " +
           "wer am Ende das größere Plus hat, gewinnt. Du startest mit 25.000 $. " +
           "Hier lernst du ohne Zeitdruck alles Wichtige."},
-  2:{lbl:"Schritt 2/6 · Kaufen", pause:true, glow:"buyBtn",
+  2:{lbl:"Schritt 2/10 · Kaufen", pause:true, glow:"buyBtn",
      text:"Erst mal einkaufen: Im Order-Panel ist die Stückzahl <b>5</b> gewählt. " +
           "Tippe jetzt auf <b>Kaufen</b> – du bekommst 5 × SPCX zum aktuellen Kurs."},
-  3:{lbl:"Schritt 2/6 · Kaufen", pause:false,
+  3:{lbl:"Schritt 3/10 · Einstand", pause:false,
      text:"✅ Gekauft! Die gestrichelte Linie im Chart ist dein <b>Einstand</b>. " +
           "Liegt der Kurs darüber, bist du im Plus. Schau kurz zu …"},
-  4:{lbl:"Schritt 3/6 · Verkaufen", pause:true, glow:"sellBtn",
+  4:{lbl:"Schritt 4/10 · Depot & Gewinn", pause:true, glow:"depotPanel", btn:"Verstanden", next:5,
+     text:"📒 Dein <b>Depot</b> rechts zeigt alles Offene: <b>Stück</b>, deinen <b>Einstand</b> und den " +
+          "aktuellen <b>Gewinn/Verlust</b>. Ganz oben siehst du dein <b>Live-Ergebnis</b> übers gesamte " +
+          "Depot – genau diese Zahl entscheidet am Ende das Duell."},
+  5:{lbl:"Schritt 5/10 · Kerzen-Chart", pause:true, cm:"candle", glow:"chartToggle", btn:"Verstanden", next:6,
+     text:"🕯️ Über <b>📊 Kerzen</b> wechselst du die Chart-Ansicht. Jede Kerze fasst ~10 Sekunden zusammen: " +
+          "Der <b>Körper</b> zeigt Eröffnung→Schluss (<span style=\"color:var(--up)\">grün</span> = gestiegen, " +
+          "<span style=\"color:var(--down)\">rot</span> = gefallen), die dünnen <b>Dochte</b> das Hoch und Tief. " +
+          "So erkennst du Schwankungen und Wendepunkte deutlicher als in der Linie."},
+  6:{lbl:"Schritt 6/10 · Verkaufen", pause:true, cm:"line", glow:"sellBtn",
      text:"📈 Schön gelaufen! Gewinne zählen aber erst, wenn du sie sicherst: " +
           "Tippe jetzt auf <b>Verkaufen</b>."},
-  5:{lbl:"Schritt 4/6 · News", pause:true, btn:"Verstanden", next:6,
+  7:{lbl:"Schritt 7/10 · News", pause:true, btn:"Verstanden", next:8,
      text:"💰 Gewinn gesichert! Jetzt die wichtigste Mechanik: <b>News</b>. Gleich erscheint eine " +
           "Breaking News – der Kurs reagiert aber erst <b>~8 Sekunden später</b>. " +
           "Diese Lücke ist deine Chance: Meldung lesen und handeln, bevor der Markt zieht!"},
-  6:{lbl:"Schritt 4/6 · News", pause:false,
+  8:{lbl:"Schritt 7/10 · News", pause:false,
      text:"👀 Achte auf die Meldung – und nutze die Sekunden bis zur Kursreaktion: " +
           "bei guten News kaufen, bei schlechten verkaufen."},
-  7:{lbl:"Schritt 5/6 · Insider", pause:true, btn:"Weiter", next:8,
+  9:{lbl:"Schritt 8/10 · Insider", pause:true, btn:"Weiter", next:10,
      text:"🤫 <b>Insider-Tipps:</b> Manchmal flüstert dir eine vertrauliche Quelle, dass sich bei " +
           "einer Aktie etwas anbahnt – <b>bevor</b> es News gibt (im echten Spiel rund 50 Sekunden " +
           "vorher). Gleich bekommst du so einen Tipp – positioniere dich!"},
-  8:{lbl:"Schritt 5/6 · Insider", pause:false,
+  10:{lbl:"Schritt 8/10 · Insider", pause:false,
      text:"Über die <b>Watchlist</b> oben wechselst du zwischen den Aktien. " +
           "Der Tipp verrät nur die Richtung – den Rest machst du draus."},
-  9:{lbl:"Schritt 6/6 · Abschluss-Test", pause:true, btn:"Test starten", next:10,
-     text:"🏁 <b>Abschluss-Test:</b> Noch etwa eine Minute freies Spiel, eine letzte News kommt " +
-          "bestimmt. Extra-Trick: Mit dem <b>Short-🐻-Button</b> setzt du auf fallende Kurse – " +
-          "eingedeckt wird per Kaufen."},
-  10:{lbl:"Schritt 6/6 · Abschluss-Test", pause:false,
-     text:"Du bist dran – hol raus, was geht! Das Tutorial endet mit dem Countdown."},
+  11:{lbl:"Schritt 9/10 · Alle Aktien", pause:true, glow:"openStocks",
+     text:"⭐ Du handelst nicht nur diese vier! Tippe oben auf <b>»☆ Alle Aktien«</b> – dort warten alle " +
+          "<b>10 Werte</b>. Eine Aktie antippen handelt sie direkt. Mit dem <b>Stern</b> legst du deine bis " +
+          "zu 4 Watchlist-Favoriten fest. <b>Probier's:</b> nimm einen Stern weg und mach dafür eine neue " +
+          "Aktie zum Favoriten."},
+  12:{lbl:"Schritt 10/10 · Short & Abschluss", pause:true, glow:"shortBtn", btn:"Test starten", next:13,
+     text:"🐻 Letzter Trick: Mit dem <b>Short-Button</b> setzt du auf <b>fallende</b> Kurse (eingedeckt wird " +
+          "per Kaufen). Jetzt noch etwa eine Minute freies Spiel – und gleich ein seltenes " +
+          "<b>💥 Mega-Event</b>. Beobachte genau!"},
+  13:{lbl:"Schritt 10/10 · Mega-Event", pause:false,
+     text:"💥 Gleich schlägt ein <b>Mega-Event</b> ein: ein riesiger Sprung mit langer Zündschnur. " +
+          "Achte auf das <b>Vor-Beben</b> – der Kurs kriecht schon vorher in die Richtung."},
+  14:{lbl:"Schritt 10/10 · Mega-Event", pause:false,
+     text:"🚀 Im <b>Hoch</b>! Megas <b>ebben danach wieder ab</b> – ein echtes Verkaufsfenster. " +
+          "Wer den Spike mitnimmt und rechtzeitig verkauft, gewinnt groß. Spiel es zu Ende!"},
 };
 
 function tutShow(n){
   tutStep = n;
   const st = TUT_STEPS[n];
   paused = st.pause;
+  if(st.cm) setChartMode(st.cm); // Schritt kann die Chart-Ansicht umstellen (Kerzen/Linie)
   $("coachStep").textContent = st.lbl;
   $("coachText").innerHTML = st.text;
   const b = $("coachBtn");
@@ -2565,17 +2589,23 @@ function tutShow(n){
 /* Aktions-Schritte: erfolgreicher Kauf bzw. Verkauf schaltet weiter */
 function tutOnTrade(side){
   if(tutStep === 2 && side === "buy") tutShow(3);
-  else if(tutStep === 4 && side === "sell") tutShow(5);
+  else if(tutStep === 6 && side === "sell") tutShow(7);
+}
+
+/* Favoriten-Schritt: sobald eine neue (nicht-Standard) Aktie zum Favorit wird */
+function tutOnFav(){
+  if(tutStep === 11 && favorites.some(f => !DEFAULT_FAVS.includes(f))){
+    closeStockModal();
+    tutShow(12);
+  }
 }
 
 /* Beobachtungs-Phasen enden an festen Ticks */
 function tutOnTick(){
-  if(tickCount === 20 && tutStep === 3){
-    // Schon vor dem Gate alles verkauft? Dann den Verkaufs-Schritt überspringen
-    Object.keys(players[round].pos).length ? tutShow(4) : tutShow(5);
-  }
-  else if(tickCount === 40 && tutStep === 6) tutShow(7);
-  else if(tickCount === 80 && tutStep === 8) tutShow(9);
+  if(tickCount === 20 && tutStep === 3) tutShow(4);        // Einstand/Depot
+  else if(tickCount === 44 && tutStep === 8) tutShow(9);   // News → Insider
+  else if(tickCount === 82 && tutStep === 10) tutShow(11); // Insider → Alle Aktien
+  else if(tickCount === 114 && tutStep === 13) tutShow(14);// Mega im Hoch
 }
 
 /* Abschluss: eigenes Übungs-Ergebnis statt Duell-Auswertung */
@@ -2587,9 +2617,8 @@ function tutFinish(p){
   $("coachText").innerHTML =
     `🎓 <b>Geschafft!</b> Dein Übungs-Ergebnis: ` +
     `<b style="color:${pnl >= 0 ? "var(--up)" : "var(--down)"}">${sgn(pnl)}</b>. ` +
-    `💡 <b>Tipp:</b> Im echten Spiel gibt es <b>10 Aktien</b>. Über den Button ` +
-    `<b>»☆ Alle Aktien«</b> über der Watchlist stöberst du durch alle Werte, wählst ` +
-    `direkt eine zum Handeln und legst per Stern deine bis zu <b>4 Favoriten</b> fest. ` +
+    `Du kennst jetzt Kaufen, Verkaufen & Short, den Einstand & dein Depot, den Kerzen-Chart, ` +
+    `News mit Reaktionslücke, Insider-Tipps, alle 10 Aktien samt Favoriten – und Mega-Events. ` +
     `Im echten Duell zählt genau dein Ergebnis – nur dass dein Gegner denselben Markt bekommt. Viel Erfolg!`;
   const b = $("coachBtn");
   b.style.display = "";
@@ -2643,11 +2672,12 @@ document.querySelectorAll(".chip").forEach(c => c.onclick = () => {
   renderAll();
 });
 /* Chart-Ansicht umschalten (Linie/Kerzen) – reine Optik, kein Spieleinfluss */
-document.querySelectorAll(".ctg").forEach(b => b.onclick = () => {
-  chartMode = b.dataset.cm;
-  document.querySelectorAll(".ctg").forEach(x => x.classList.toggle("active", x === b));
+function setChartMode(cm){
+  chartMode = cm;
+  document.querySelectorAll(".ctg").forEach(x => x.classList.toggle("active", x.dataset.cm === cm));
   if(market) drawChart();
-});
+}
+document.querySelectorAll(".ctg").forEach(b => b.onclick = () => setChartMode(b.dataset.cm));
 window.addEventListener("resize", () => { if(market) drawChart(); });
 
 /* PWA: Service Worker registrieren (nur wenn über http(s) geladen) */
