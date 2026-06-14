@@ -1364,9 +1364,11 @@ function drawChart(){
   /* Tick → X: konstante Breite pro Tick, rechtsbündig am Kopf ausgerichtet.
      So scrollt die Kurve gleichmäßig nach links, statt bei jedem neuen Punkt
      zu „atmen" (denn ein fester Fensterausschnitt = feste px/Tick). Im
-     Kerzen-Modus liegt der „Kopf" in der Mitte der offenen Kerze. */
+     Kerzen-Modus liegt der „Kopf" an der rechten Slot-Grenze der offenen Kerze
+     (= Tick (lastC+1)*CT), damit die Kerze ganz im Chart liegt und nicht am
+     rechten Rand abgeschnitten wird. */
   const pxPerTick = (w-L-R) / (WINDOW - 1);
-  const headX = candles ? (lastC + 0.5) * CT : headTick;
+  const headX = candles ? (lastC + 1) * CT : headTick;
   const xt = t => (w-R) - (headX - t) * pxPerTick;
   const X = i => xt(startIdx + i);
   const Y = v => h - B - (h-T-B) * ((v-min)/(max-min));
