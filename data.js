@@ -8,13 +8,13 @@ const STOCK_DEFS = {
         char:"🚀 Hype-Wert: reagiert besonders heftig auf News"},
   TSLA:{name:"Tesla",      type:"growth",   start:312.40, sigma:0.0010, drift:0, momentum:0.45,
         char:"📈 Momentum-Wert: Trends verstärken sich selbst"},
-  NVDA:{name:"NVIDIA",     type:"dividend", start:176.80, sigma:0.0008, drift:0, meanRev:0.002,
+  NVDA:{name:"NVIDIA",     type:"dividend", start:176.80, sigma:0.0008, drift:0, meanRev:0.002, divMult:0.8,
         char:"🛡️ Stabiler Riese: schwankt wenig, zahlt Dividende"},
   RKLB:{name:"Rocket Lab", type:"risk",     start:38.65,  sigma:0.0011, drift:0, spikeP:0.006, spikeMag:0.010,
         char:"🎢 Zock-Papier: lange ruhig, dann plötzliche Sprünge"},
-  AMZN:{name:"Amazon",     type:"dividend", start:185.00, sigma:0.0009, drift:0, meanRev:0.0015,
+  AMZN:{name:"Amazon",     type:"dividend", start:185.00, sigma:0.0009, drift:0, meanRev:0.0015, divMult:0.9,
         char:"🐢 Schwergewicht: bedächtig, zahlt Dividende"},
-  AAPL:{name:"Apple",      type:"dividend", start:228.00, sigma:0.0007, drift:0, meanRev:0.0025,
+  AAPL:{name:"Apple",      type:"dividend", start:228.00, sigma:0.0007, drift:0, meanRev:0.0025, divMult:1.1,
         char:"🍎 Sicherer Hafen: ruhig, zahlt Dividende"},
   MSFT:{name:"Microsoft",  type:"dividend", start:430.00, sigma:0.0008, drift:0.00001,
         char:"🏢 Solider Wachstumswert: ruhiger Aufwärtstrend, Dividende"},
@@ -42,10 +42,13 @@ const DISPLAY_SYMS = [...Object.keys(STOCK_DEFS), ETF_SYM, ETF2_SYM];
 const FEE_PCT = 0.0015;                                  // 0,15 % Gebühr je Order (Normalfall)
 const feeRate = sym => sym === ETF2_SYM ? ACTIVE_FEE_PCT : FEE_PCT;   // Aktiv-Fonds teurer
 const feeOf = (v, sym) => Math.round(v * feeRate(sym) * 100) / 100;   // auf Cent gerundet (keine Float-Drift)
-const DIV_PCT = 0.00004;                                 // ~1,7 % Brutto-Dividende übers Spiel (Einzelwerte)
-const DIV_PCT_ETF = 0.00006;                             // ~2,5 % – Sparplan-Bonus, macht den Index-Stil konkurrenzfähig
+const DIV_PCT = 0.00006;                                 // ~2,5 % Brutto-Dividende übers 10-Min-Spiel (Einzelwerte; je Wert via divMult gespreizt)
+const DIV_PCT_ETF = 0.00010;                             // ~4,2 % – Sparplan-Bonus, macht den Index-Stil gegen aktives Traden konkurrenzfähig
 const DIV_PAYOUT = Math.max(1, Math.round(20000 / TICK_MS)); // Dividende wird alle ~20 s sichtbar ausgezahlt
 const isDividendSym = sym => { const d = defOf(sym); return !!d && (d.type === "dividend" || sym === ETF_SYM); };
+// Per-Tick-Dividendensatz eines Symbols (0 = zahlt nichts) – EINE Quelle für Accrual UND Anzeige
+const divRate = sym => { if(sym === ETF_SYM) return DIV_PCT_ETF;
+  const d = defOf(sym); return d && d.type === "dividend" ? DIV_PCT * (d.divMult || 1) : 0; };
 const NEWS_POOL = [
   {t:"SPCX", txt:"Starship-Testflug verläuft fehlerfrei – Booster erneut gelandet.", jump:+0.012, drift:+0.0005, dur:36},
   {t:"SPCX", txt:"Analystenhaus warnt: Bewertung von 1,77 Bio. $ »kaum zu rechtfertigen«.", jump:-0.010, drift:-0.0004, dur:38},
