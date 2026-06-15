@@ -876,7 +876,7 @@ function processTick(showPopup){
   // an; ausgezahlt wird sichtbar gebündelt alle ~20 s. Deterministisch (kein rnd()).
   for(const [sym, pos] of Object.entries(p.pos))
     if(pos.qty > 0 && isDividendSym(sym))
-      p.pendingDiv = (p.pendingDiv || 0) + pos.qty * price(sym) * (sym === ETF_SYM ? DIV_PCT_ETF : DIV_PCT) * TICK_SCALE;
+      p.pendingDiv = (p.pendingDiv || 0) + pos.qty * price(sym) * divRate(sym) * TICK_SCALE;
   if(p.pendingDiv > 0 && tickCount % DIV_PAYOUT === 0) payDividend(p, showPopup);
 
   // Statistik: investierte Zeit, Depot-Spitze/-Tief, max. Rücksetzer
@@ -1226,7 +1226,12 @@ function renderAll(){
     ek.style.display = "none";
   }
 
-  $("qName").innerHTML = `${defOf(selected).name} · Eröffnung ${fmt(op)}<br><span class="char-line">${defOf(selected).char}</span>`;
+  // Renditebadge: Brutto-Dividende übers ganze Spiel, wenn man den Wert durchhält (0 → kein Badge)
+  const dy = divRate(selected) * TICK_SCALE * matchTicks * 100;
+  const divBadge = dy >= 0.05
+    ? ` · <span class="div-yield" title="Brutto-Dividende, wenn du den ganzen Lauf hältst">💰 ~${dy.toLocaleString("de-DE", {maximumFractionDigits:1})} % Div./Lauf</span>`
+    : "";
+  $("qName").innerHTML = `${defOf(selected).name} · Eröffnung ${fmt(op)}<br><span class="char-line">${defOf(selected).char}${divBadge}</span>`;
   $("tradeSym").textContent = selected;
 
   // Order: Kaufen deckt bei Short-Position ein, Verkaufen nur für Longs,
