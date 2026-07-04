@@ -1,7 +1,9 @@
 # Plan: Online-Stufe 1 — Cloudflare Worker (Auto-Ergebnisvergleich + echte Lobby + Geheim-Seed)
 
-Status: **geplant, noch nicht umgesetzt.** Voraussetzung ist der einmalige Cloudflare-Setup
-(siehe „Teil A"). Evaluation & Begründung der Backend-Wahl: siehe `IDEAS.md` (Abschnitt 🌐).
+Status: **Worker + Tests fertig** (`worker.js`, `worker.test.js` → `node worker.test.js`,
+33/33 grün). Cloudflare-Setup (Teil A, Schritte 1–4) ist erledigt; als Nächstes Teil A
+Schritt 5 (Code einfügen) und danach die Client-Integration (Teil B.3).
+Evaluation & Begründung der Backend-Wahl: siehe `IDEAS.md` (Abschnitt 🌐).
 
 ## Ziel
 
@@ -58,7 +60,7 @@ Verfeinerungen gegenüber dem Grobplan (Begründung im Datei-Header):
 
 Alle KV-Einträge mit `expirationTtl: 86400` (24 h) → räumt sich selbst auf.
 
-### 2. Worker-Tests (Node, im bestehenden Harness-Stil)
+### 2. Worker-Tests — ✅ umgesetzt (`worker.test.js`, Aufruf: `node worker.test.js`)
 `env.GAMES` als Map-Stub; den `fetch`-Handler direkt aufrufen. Fälle: kompletter Happy-Path
 (create→join→2×ready→seed erscheint→2×result→gegenseitig abholen), Seed **nicht** vor beidem
 ready sichtbar, Doppel-Join 409, Result-Überschreiben 409, kaputte Eingaben 400, TTL gesetzt.
