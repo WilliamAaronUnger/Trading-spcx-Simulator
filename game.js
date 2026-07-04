@@ -2270,12 +2270,12 @@ function stopScan(){
   $("scanOverlay").classList.remove("show");
 }
 async function startScan(){
-  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
-    alert("Die Kamera ist hier nicht verfügbar – öffne das Spiel über https bzw. als installierte App.");
-    return;
-  }
   $("scanErr").textContent = "";
   $("scanOverlay").classList.add("show");
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    $("scanErr").textContent = "Kamera hier nicht verfügbar. Tipp: den QR mit der Kamera-App scannen oder den 6-stelligen Code eintippen.";
+    return;
+  }
   let detect;
   try{
     detect = await makeDetector();
@@ -2283,13 +2283,21 @@ async function startScan(){
     $("scanErr").textContent = "Scanner konnte nicht geladen werden – bitte erneut versuchen.";
     return;
   }
+  // Rückkamera bevorzugen, aber nicht erzwingen; scheitert das, jede verfügbare Kamera nehmen.
   try{
-    scanStream = await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
-  }catch(e){
-    $("scanErr").textContent = "Kein Kamerazugriff – bitte in den Einstellungen erlauben.";
-    return;
+    scanStream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"}}, audio:false});
+  }catch(e1){
+    try{
+      scanStream = await navigator.mediaDevices.getUserMedia({video:true, audio:false});
+    }catch(e2){
+      // Fehlername mit anzeigen (NotAllowedError etc.) – hilft bei der Diagnose, v.a. auf iOS
+      $("scanErr").textContent = "Kein Kamerazugriff (" + (e2.name || e2.message || "unbekannt") +
+        ") – bitte der App/Website in den iOS-Einstellungen die Kamera erlauben.";
+      return;
+    }
   }
   const video = $("scanVideo");
+  video.muted = true;
   video.srcObject = scanStream;
   await video.play().catch(()=>{});
   const tick = async () => {
