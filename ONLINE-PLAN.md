@@ -7,7 +7,7 @@ Lesezugriffe je Standort bis zu 60 s → Geräte in verschiedenen Netzen sahen B
 der CSP eingetragen), Client integriert (echte Lobby, Geheim-Seed, Auto-Ergebnisvergleich,
 `SPCX5`-Payload mit Seed-Prüfung, stiller Offline-Fallback). Verifiziert per Node:
 `worker.test.js` 33/33 und Zwei-Client-Ende-zu-Ende-Simulation gegen den echten Handler
-(19 Checks). Offen: Gerätetest (Teil A Schritt 7) und die späteren Stufen (Live-P&L …).
+(19 Checks). Gerätetest mit zwei Geräten bestanden (Juli 2026). Offen: nur noch die späteren Stufen (Live-P&L …).
 Evaluation & Begründung der Backend-Wahl: siehe `IDEAS.md` (Abschnitt 🌐).
 
 ## Ziel
