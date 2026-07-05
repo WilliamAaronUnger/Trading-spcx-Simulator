@@ -364,6 +364,11 @@ let roundAnchor = 0;
 let mode = "local";
 let sandbox = false;
 let sandboxCash = 25000;
+let sandboxExpert = false; // 🎓-Toggle des Sandbox-Übungsplatzes
+/* 🎓 Experten-Modus (IMPACT-PLAN.md): im Raum per Ersteller-Flag der Runde, in der
+   Sandbox per Toggle. Schaltet die lokalen Härten (Spread, Handelsstopp, Limit-Orders,
+   Short-Dividende, ACT-Haltekosten) und – NUR im Raum – den dynamischen Markt zu. */
+let expert = false;
 
 let durationMin = 15;
 document.querySelectorAll(".dur[data-m]").forEach(b => b.onclick = () => {
@@ -383,11 +388,18 @@ document.querySelectorAll(".cap").forEach(b => b.onclick = () => {
   document.querySelectorAll(".cap").forEach(x => x.classList.toggle("active", x === b));
 });
 
+$("sbExpertToggle").onclick = function(){
+  sandboxExpert = !sandboxExpert;
+  this.classList.toggle("on", sandboxExpert);
+  this.querySelector(".opt-check").textContent = sandboxExpert ? "☑" : "☐";
+};
+
 function applySoloUI(){
   const solo = mode === "solo";
   $("soloSub").style.display  = solo ? "" : "none";
   $("soloHint").style.display = solo ? "" : "none";
   $("capField").style.display = (solo && sandbox) ? "" : "none";
+  $("expField").style.display = (solo && sandbox) ? "" : "none";
   $("durField").style.display = (solo && sandbox) ? "none" : "";
   $("soloHint").textContent   = sandbox
     ? "Freies Üben ohne Zeitdruck – kein Rekord-Eintrag."
@@ -486,10 +498,10 @@ function buildMarket(){
 }
 
 function newPlayer(name, color){
-  return {name, cash:START_CASH, pos:{}, color, result:null, pendingDiv:0,
+  return {name, cash:START_CASH, pos:{}, color, result:null, pendingDiv:0, orders:[],
           stats:{trades:0, buys:0, sells:0, shorts:0, volume:0, realized:0, best:null, worst:null,
                  allIns:0, newsTrades:0, tipTrades:0, bestPct:0, investedTicks:0, perSym:{},
-                 peak:START_CASH, trough:START_CASH, maxDD:0, feesPaid:0, dividends:0}};
+                 peak:START_CASH, trough:START_CASH, maxDD:0, feesPaid:0, dividends:0, slip:0}};
 }
 
 /* ====================== Lokaler Speicher (Namen + Rekord) ====================== */
@@ -523,6 +535,7 @@ function saveSnapshot(phase){
       v:2, mode, gameCode, durationMin, round,
       startAt: wallClock() ? startAt : 0,
       marketSeed, room, roomPhase, // Raum-Runde: Seed + Mitgliedschaft fürs Wiederaufnehmen
+      expert, cash: START_CASH,    // 🎓-Regeln + Startkapital der Runde
       tickCount, players, phase: phase || "play", ts: Date.now()
     }));
   }catch(e){}
@@ -603,6 +616,9 @@ $("resumeBtn").onclick = () => {
   gameCode = snap.gameCode;
   durationMin = snap.durationMin;
   marketSeed = (typeof snap.marketSeed === "number") ? snap.marketSeed : null;
+  expert = !!snap.expert;                 // 🎓-Regeln der Runde wiederherstellen
+  START_CASH = snap.cash || 25000;
+  journal = []; effPaths = null;          // Journal kommt frisch über den Raum-Puls
   if(snap.room){ room = snap.room; roomPhase = 'playing'; saveRoomState(); startRoomTimer(); }
   matchTicks = Math.round(durationMin * 60000 / TICK_MS);
   market = genMarket(marketSeed == null ? gameCode : marketSeed, matchTicks);
@@ -632,8 +648,12 @@ setTop("single"); // Startauswahl: Einzelspieler – mode-Variable an die UI ang
 $("startBtn").onclick = async () => {
   rememberNames();
   marketSeed = null; // frischer Zustand für jedes neue Spiel
+  journal = []; effPaths = null;
   if(mode === "solo"){
-    // Einzelspieler: ein Spieler, eine Runde, sofortiger Start (keine Lobby)
+    // Einzelspieler: ein Spieler, eine Runde, sofortiger Start (keine Lobby).
+    // 🎓 Experten-Modus gibt es solo nur im Sandbox-Übungsplatz (nur lokale Härten,
+    // kein dynamischer Markt – der braucht Mitspieler + Server).
+    expert = sandbox && sandboxExpert;
     START_CASH = sandbox ? sandboxCash : 25000;
     gameCode = makeCode(DURATIONS.indexOf(durationMin));
     buildMarket();
@@ -641,6 +661,7 @@ $("startBtn").onclick = async () => {
     startRound(0);
     return;
   }
+  expert = false;
   START_CASH = 25000;
   if(mode === "local"){
     gameCode = makeCode(DURATIONS.indexOf(durationMin));
@@ -786,6 +807,11 @@ const apiJson = async (path, opts) => (await api(path, opts)).json();
 
 /* Mitgliedschaft: {code, token, p, role, name, played, ts} – überlebt Reloads/App-Wechsel */
 let room = null, roomState = null, roomTimer = null, roomPhase = "idle", roomTickN = 0, roomDurPick = null;
+let roomExpertPick = false, roomCashPick = 25000; // Ersteller-Wahl für die nächste Runde
+/* Blockorder-Journal der laufenden Expert-Runde (vom Server gestempelt, anonym) und
+   die daraus abgeleiteten Effektiv-Pfade (Basis × Impact-Overlay). effPaths ist NUR
+   im Expert-Raum gesetzt – alle anderen Modi laufen unverändert auf market.paths. */
+let journal = [], effPaths = null;
 /* Einladung (QR + Link) ist einklappbar: automatisch offen, solange man allein ist,
    danach zu – bis jemand den Knopf antippt (dann bleibt die Wahl bestehen). */
 let roomInviteOpen = true, roomInviteTouched = false;
@@ -888,12 +914,22 @@ document.querySelectorAll(".rdur").forEach(b => b.onclick = () => {
   roomDurPick = +b.dataset.m;
   if(roomState) renderRoomScreen(roomState);
 });
+/* Runden-Optionen (nur Ersteller): 🎓-Toggle + 💰-Startkapital für die NÄCHSTE Runde */
+$("expertToggle").onclick = () => {
+  roomExpertPick = !roomExpertPick;
+  if(roomState) renderRoomScreen(roomState);
+};
+document.querySelectorAll(".rcash").forEach(b => b.onclick = () => {
+  roomCashPick = +b.dataset.c;
+  document.querySelectorAll(".rcash").forEach(x => x.classList.toggle("active", x === b));
+});
 $("roomStartBtn").onclick = async function(){
   if(!room) return;
   this.disabled = true; $("roomErr").textContent = "";
   try{
     const rd = await apiJson("/room/" + room.code + "/start",
-      {method: "POST", body: JSON.stringify({token: room.token, dur: roomDurPick || undefined})});
+      {method: "POST", body: JSON.stringify({token: room.token, dur: roomDurPick || undefined,
+        expert: roomExpertPick || undefined, cash: roomExpertPick ? roomCashPick : undefined})});
     startRoomRound(rd);
   }catch(e){
     $("roomErr").textContent = "Start nicht möglich – läuft noch eine Runde, oder es fehlen Spieler.";
@@ -913,6 +949,15 @@ async function roomTick(){
   if(!room) return;
   roomState = st;
   const rd = st.round;
+  /* Expert-Runde: Blockorder-Journal übernehmen. Neue Einträge landen als Meldung im
+     Feed; die Effektiv-Pfade werden neu aufgebaut (Wirkung erst REACT_TICKS nach dem
+     Server-Stempel – alle Geräte rechnen aus demselben Journal denselben Kurs). */
+  if(st.trades && expert && roomPhase === "playing" && st.trades.length > journal.length){
+    const seen = journal.length;
+    journal = st.trades;
+    rebuildEff();
+    if(!over) for(let i = seen; i < journal.length; i++) announceBlock(journal[i]);
+  }
   // Neue Runde erkannt → mitspielen (nur Spieler-Rolle, nur wenn der Start frisch ist;
   // Zuspätkommer und Leinwände bleiben im Raum und sehen den Live-Stand)
   if(roomPhase === "idle" && rd && rd.n > (room.played || 0) &&
@@ -938,7 +983,15 @@ async function roomTick(){
     const runningW = nw >= rd.startAt - 8000 && nw < rd.startAt + rd.dur * 60000;
     if(runningW) ensureWall(rd);
     else if(wallOn) stopWall();
-    if(wallOn) renderWallBoard(st);
+    if(wallOn){
+      // Expert-Runde: Journal in Effektiv-Pfade + Squeeze-Liste übersetzen
+      if(rd.expert && st.trades && st.trades.length !== wallJournal.length){
+        wallJournal = st.trades;
+        const res = buildEffPaths(wallMarket, wallJournal, wallInfo.startAt, wallTicksTotal());
+        wallEff = res.eff; wallSqueezes = res.squeezes;
+      }
+      renderWallBoard(st);
+    }
   }else if(wallOn) stopWall();
   // Runden-Rangliste offen: eingetroffene Ergebnisse der Mitspieler nachladen
   if(rankRoom && st.results){
@@ -1001,6 +1054,14 @@ function renderRoomScreen(st){
     const pick = roomDurPick || st.dur;
     document.querySelectorAll(".rdur").forEach(b => b.classList.toggle("active", +b.dataset.m === pick));
   }
+  // Runden-Optionen: eigener Block unterhalb des Start-Bereichs, NUR für den Ersteller
+  $("roomOptField").style.display = canStart ? "" : "none";
+  if(canStart){
+    $("expertToggle").classList.toggle("on", roomExpertPick);
+    $("expertToggle").querySelector(".opt-check").textContent = roomExpertPick ? "☑" : "☐";
+    $("expertCash").style.display = roomExpertPick ? "" : "none";
+    document.querySelectorAll(".rcash").forEach(b => b.classList.toggle("active", +b.dataset.c === roomCashPick));
+  }
   const waiting = roomPhase === "idle" && !running && !canStart;
   $("roomWaitHint").style.display = waiting ? "" : "none";
   if(waiting) $("roomWaitHint").textContent = room.p === 1
@@ -1020,6 +1081,11 @@ function renderRoomScreen(st){
 let wallOn = false, wallRoundN = 0, wallMarket = null, wallInfo = null,
     wallRaf = 0, wallNewsSeen = 0, wallDismissed = 0, wallFlashUntil = 0,
     wallFocus = null, wallFocusUntil = 0, wallChartMode = "line", wallSlowAt = 0;
+/* Expert-Runden auf der Leinwand: eigenes Journal + Effektiv-Pfade (gleiche
+   deterministische Formeln wie beim Spieler, nur mit dem Runden-Anker) */
+let wallJournal = [], wallEff = null, wallSqueezes = [], wallSqSeen = 0,
+    wallBlockSeen = 0, wallBlockUntil = 0;
+const wallPaths = () => wallEff || wallMarket.paths;
 
 function wallTicksTotal(){ return Math.round(wallInfo.dur * 60000 / TICK_MS); }
 function wallTickNow(){
@@ -1041,8 +1107,10 @@ function ensureWall(rd){
   wallRoundN = rd.n;
   wallInfo = {n: rd.n, dur: rd.dur, startAt: rd.startAt, seed: rd.seed >>> 0};
   wallMarket = genMarket(wallInfo.seed, wallTicksTotal());
-  // beim Einstieg mitten in der Runde: vergangene News nicht als Feuerwerk nachholen
+  wallJournal = []; wallEff = null; wallSqueezes = []; wallBlockSeen = 0; wallBlockUntil = 0;
+  // beim Einstieg mitten in der Runde: Vergangenes nicht als Feuerwerk nachholen
   wallNewsSeen = wallMarket.events.filter(e => e.tick <= wallTickNow()).length;
+  wallSqSeen = -1; // -1 = beim ersten Journal-Empfang auf den Ist-Stand setzen
   buildWallMinis();
   $("wallRoom").textContent = room ? room.code : "";
   $("wallRound").textContent = rd.n;
@@ -1079,7 +1147,7 @@ function wallFocusSym(t){
   const back = Math.min(t, 90);
   if(back < 2) return best;
   for(const s of DISPLAY_SYMS){
-    const p = wallMarket.paths[s];
+    const p = wallPaths()[s];
     const m = Math.abs(p[t] / p[t - back] - 1);
     if(m > bm){ bm = m; best = s; }
   }
@@ -1130,7 +1198,7 @@ const wallMarketSlice = (path, t, back) => path.slice(Math.max(0, t - back), t +
 function buildWallMinis(){
   $("wallMinis").innerHTML = DISPLAY_SYMS.map(s =>
     `<div class="wall-mini"><canvas id="wm-${s}"></canvas>
-     <div class="wm-l"><b>${s}</b><span id="wmc-${s}"></span></div></div>`).join("");
+     <div class="wm-l"><b>${s}</b><span class="wm-skew" id="wmsk-${s}"></span><span id="wmc-${s}"></span></div></div>`).join("");
 }
 /* rAF-Schleife: das Fokus-Chart wird jeden Frame glatt interpoliert (wie der Spieler-
    Chart), die schwereren Teile (Mini-Wand, Rangliste-Text, News, Restzeit) laufen
@@ -1141,10 +1209,11 @@ function wallFrame(){
   const now = Date.now();
   const {t, prog} = wallClockTick();
   const sym = wallPickFocus(t, now);
-  // Fokus-Chart über den echten Spieler-Renderer (Kerzen/Linie, Live-Marker, Fläche)
-  drawChart({canvas: $("wallChart"), sym, market: wallMarket, tick: t, prog,
+  // Fokus-Chart über den echten Spieler-Renderer (Kerzen/Linie, Live-Marker, Fläche);
+  // in Expert-Runden auf den Effektiv-Pfaden (Blockorders/Squeeze sichtbar)
+  drawChart({canvas: $("wallChart"), sym, market: {paths: wallPaths()}, tick: t, prog,
              pos: null, chartMode: wallChartMode, big: true});
-  const p = wallMarket.paths[sym];
+  const p = wallPaths()[sym];
   const live = t >= 1 ? p[t-1] + (p[t] - p[t-1]) * prog : (p[0] || 0);
   const ch = (live / p[0] - 1) * 100;
   $("wallSym").textContent = sym;
@@ -1161,26 +1230,56 @@ function wallSlow(now, t, focus){
     : Math.max(0, wallInfo.startAt + wallInfo.dur * 60000 - now);
   $("wallTime").textContent = (wallInfo.startAt > now ? "Start in " : "") +
     Math.floor(leftMs / 60000) + ":" + String(Math.floor(leftMs % 60000 / 1000)).padStart(2, "0");
-  // Mini-Wand (kompakte Sparklines); der Fokus-Wert wird hervorgehoben
+  // Mini-Wand (kompakte Sparklines); Fokus-Wert hervorgehoben, Herden-Schieflage daneben
   for(const s of DISPLAY_SYMS){
     const cv = $("wm-" + s);
     if(!cv) continue;
     if(cv.parentElement) cv.parentElement.classList.toggle("hot", s === focus);
-    drawWallLine(cv, wallMarket.paths[s], t, 150);
-    const q = wallMarket.paths[s], c2 = (q[t] / q[0] - 1) * 100;
+    drawWallLine(cv, wallPaths()[s], t, 150);
+    const q = wallPaths()[s], c2 = (q[t] / q[0] - 1) * 100;
     const el = $("wmc-" + s);
     el.textContent = (c2 >= 0 ? "+" : "") + c2.toFixed(1) + "%";
     el.style.color = c2 >= 0 ? "var(--up)" : "var(--down)";
+    const sk = $("wmsk-" + s);
+    if(sk){
+      const trs = wallJournal.length ? wallJournal.filter(x => x.sym === s) : null;
+      const v = trs && trs.length ? skewAt(trs, t, wallInfo.startAt) : 0;
+      sk.textContent = Math.abs(v) < 0.1 ? "" :
+        (v > 0 ? "🐂" : "🐻").repeat(Math.min(3, Math.ceil(Math.abs(v) * 3)));
+    }
   }
   // News-Band + Vollbild-Einblendung für frische Meldungen
   const evs = wallMarket.events.filter(e => e.tick <= t);
-  if(evs.length) $("wallNews").textContent = "📰 " + evs[evs.length - 1].ev.txt;
+  let band = evs.length ? "📰 " + evs[evs.length - 1].ev.txt : null;
   if(evs.length > wallNewsSeen){
     const e = evs[evs.length - 1];
     wallNewsSeen = evs.length;
     $("wallFlashText").textContent = (e.mega ? "🚨 " : "📰 ") + e.ev.txt;
     $("wallFlash").style.display = "";
     wallFlashUntil = now + (e.mega ? 8000 : 4500);
+  }
+  // Frische Blockorders übernehmen kurz das News-Band (anonym – wer war's?!)
+  if(wallJournal.length > wallBlockSeen){
+    wallBlockSeen = wallJournal.length;
+    wallBlockUntil = now + 7000;
+  }
+  if(wallBlockUntil > now && wallJournal.length){
+    const tr = wallJournal[wallJournal.length - 1];
+    band = tr.side === "buy"
+      ? `🐘 Blockorder: Jemand kauft groß ${tr.sym} ein!`
+      : `🐘 Blockorder: Jemand wirft ${tr.sym} im großen Stil ab!`;
+  }
+  if(band) $("wallNews").textContent = band;
+  // Squeeze/Blasen-Crash: Vollbild-Flash, sobald die Wirkung zündet
+  const due = wallSqueezes.filter(q => q.hitTick <= t);
+  if(wallSqSeen < 0) wallSqSeen = due.length; // Einstieg mitten in der Runde: nicht nachholen
+  if(due.length > wallSqSeen){
+    const q = due[due.length - 1];
+    wallSqSeen = due.length;
+    $("wallFlashText").textContent = q.short
+      ? `🔥 SHORT SQUEEZE: ${q.sym}!` : `💥 BLASE PLATZT: ${q.sym}!`;
+    $("wallFlash").style.display = "";
+    wallFlashUntil = now + 6000;
   }
   if(wallFlashUntil && now > wallFlashUntil){
     $("wallFlash").style.display = "none";
@@ -1208,7 +1307,10 @@ function startRoomRound(rd){
   if(Date.now() > rd.startAt + 30000) return; // zu spät – ab der nächsten Runde dabei
   room.played = rd.n; saveRoomState();
   roomPhase = "countdown";
-  sandbox = false; tutorial = false; START_CASH = 25000;
+  sandbox = false; tutorial = false;
+  expert = !!rd.expert;                                  // 🎓-Flag der Runden-Ressource
+  START_CASH = expert && rd.cash ? rd.cash : 25000;      // Startkapital nur per Expert wählbar
+  journal = []; effPaths = null;
   durationMin = rd.dur;
   gameCode = +room.code;          // Anzeige + Payload-Prüfung laufen über den Raum-Code
   marketSeed = rd.seed >>> 0;     // der geheime Seed der Runde
@@ -1260,17 +1362,23 @@ function renderRanking(){
     .sort((a, b) => (b.res ? b.res.result.pnl : -Infinity) - (a.res ? a.res.result.pnl : -Infinity));
   const done = rows.filter(r => r.res).length;
   $("resSub").textContent = done >= roster.length
-    ? "Alle Ergebnisse da – identischer Markt für alle."
+    ? "Alle Ergebnisse da – identischer Markt für alle." +
+      (expert ? " Bewertung per Schlussauktion zum fairen Kurs." : "")
     : done + " von " + roster.length + " Ergebnissen da – der Rest erscheint automatisch …";
+  const own = rankResults && room ? rankResults[room.p] : null;
   let html = "";
   rows.forEach((r, i) => {
     const pos = r.res ? (i === 0 ? "👑" : i === 1 ? "🥈" : i === 2 ? "🥉" : (i + 1) + ".") : "⏳";
+    // Expert: abweichender Journal-Hash = anderes Blockorder-Journal gespielt (Sync-Problem)
+    const warn = r.res && own && !r.res.self && r.res.jhash !== undefined &&
+                 own.jhash !== undefined && r.res.jhash !== own.jhash
+      ? ' <span title="Abweichendes Blockorder-Journal – Überlagerung war nicht identisch">⚠️</span>' : "";
     const pnl = r.res
       ? `<span style="color:${r.res.result.pnl >= 0 ? "var(--up)" : "var(--down)"}">${sgn(r.res.result.pnl)}</span>`
       : '<span style="color:var(--muted);font-weight:400">spielt noch …</span>';
     html += `<div class="rank-row${r.res && !r.res.self ? " tap" : ""}${r.res && r.res.self ? " me" : ""}" data-rp="${r.p}">
       <span class="rank-pos">${pos}</span>
-      <span class="rank-name">${esc(r.name)}${r.res && r.res.self ? " (du)" : ""}</span>
+      <span class="rank-name">${esc(r.name)}${r.res && r.res.self ? " (du)" : ""}${warn}</span>
       <span class="rank-pnl">${pnl}</span></div>`;
   });
   $("rankBox").innerHTML = html;
@@ -1391,11 +1499,11 @@ function startRound(r){
   $("roundTag").textContent = tutorial
     ? "🎓 Tutorial"
     : (mode === "solo" && sandbox)
-      ? "🏖️ Sandbox"
+      ? `🏖️${expert ? "🎓" : ""} Sandbox`
       : mode === "solo"
         ? "Einzelspiel"
         : mode === "room"
-          ? `🌐 Runde ${room && room.played ? room.played : 1}`
+          ? `🌐${expert ? "🎓" : ""} Runde ${room && room.played ? room.played : 1}`
           : mode === "remote"
             ? `Code ${String(gameCode).padStart(6,"0")}`
             : `Runde ${r+1}/2`;
@@ -1409,6 +1517,7 @@ function startRound(r){
     : "";
 
   buildWatch();
+  renderOrders(); // Experten-Order-Bereich ein-/ausblenden (je nach expert-Flag)
   $("startScreen").classList.remove("show");
   $("matchScreen").classList.add("show");
   window.scrollTo(0,0);
@@ -1453,11 +1562,213 @@ function runPreStart(cb){
   }, 1000);
 }
 
+/* ====================== Experten-Modus: Markt-Impact (nur Online-Raum) ======================
+   Blockorders (Journal vom Server, anonym) werden zu einem multiplikativen Overlay über
+   dem Basismarkt: Wirkung erst REACT_TICKS nach dem Server-Stempel (Meldung vor Wirkung,
+   wie News), rampt über ~5 s herein und gibt über ~60 s zwei Drittel zurück. Alles ist
+   eine reine Funktion des Journals – kein rnd()-Verbrauch, identisch auf allen Geräten.
+   Details/Entscheidungen: IMPACT-PLAN.md. */
+function tradeTick(at, anchor){ return Math.floor((at - (anchor === undefined ? roundAnchor : anchor)) / TICK_MS); }
+
+/* Ein Journal-Eintrag wirkt ab `hit` (Server-Stempel + REACT_TICKS). Synthetische
+   Einträge (Squeeze) bringen ihre Wirkstärke/-zeit direkt mit (_mag/_hit). */
+function impactFactorAt(tr, t, anchor){
+  const hit = tr._hit !== undefined ? tr._hit : tradeTick(tr.at, anchor) + REACT_TICKS;
+  if(t < hit) return 1;
+  const mag = tr._mag !== undefined ? tr._mag : IMPACT_BASE * tr.vol / liqOf(tr.sym);
+  const full = tr.side === "buy" ? 1 + mag : 1 / (1 + mag);
+  const ramp = Math.min(1, (t - hit + 1) / IMPACT_RAMP_TICKS);
+  if(ramp < 1) return Math.pow(full, ramp);
+  const fade = Math.min(1, (t - hit - IMPACT_RAMP_TICKS + 1) / IMPACT_FADE_TICKS);
+  return Math.pow(full, 1 - (1 - IMPACT_KEEP) * fade);
+}
+
+/* Gesamt-Overlay einer Aktie zum Tick t (gedeckelt auf ±IMPACT_CAP) */
+function overlayAt(trs, t, anchor){
+  let f = 1;
+  for(const tr of trs) f *= impactFactorAt(tr, t, anchor);
+  return Math.max(1 - IMPACT_CAP, Math.min(1 + IMPACT_CAP, f));
+}
+
+/* Schieflage der Herde in einer Aktie zum Tick t: Summe der wirksamen Blockorder-
+   Volumina (Kauf +, Verkauf −), normiert auf −1…+1. Nur echte Einträge zählen. */
+function skewAt(trs, t, anchor){
+  let s = 0;
+  for(const tr of trs){
+    if(tr._mag !== undefined) continue;
+    if(tradeTick(tr.at, anchor) + REACT_TICKS > t) continue;
+    s += tr.side === "buy" ? tr.vol : -tr.vol;
+  }
+  return Math.max(-1, Math.min(1, s / SKEW_FULL));
+}
+
+/* Squeeze-Suche: eine News, die GEGEN eine deutliche Schieflage läuft, zwingt die
+   Herde durch dieselbe Tür (Shorts decken ein / Blasen-Longs fliehen) – als
+   synthetischer Zusatz-Impact in Sprungrichtung, deterministisch aus Journal+Markt. */
+function findSqueezes(mkt, bySym, anchor, ticks){
+  const out = [];
+  for(const e of mkt.events){
+    const sym = e.ev.t;
+    if(sym === "ALL" || !bySym[sym]) continue;
+    const jump = e.ev.jump || 0;
+    if(!jump) continue;
+    const hit = e.tick + (e.mega ? MEGA_REACT_TICKS : REACT_TICKS);
+    if(hit > ticks) continue;
+    const s = skewAt(bySym[sym], hit, anchor);
+    if(Math.abs(s) < SKEW_MIN || (jump > 0) === (s > 0)) continue;
+    out.push({sym, hitTick: hit, side: jump > 0 ? "buy" : "sell",
+              _hit: hit, _mag: Math.abs(jump) * SQUEEZE_K * Math.abs(s),
+              short: s < 0}); // short=true → Short-Squeeze, sonst platzt eine Long-Blase
+  }
+  return out;
+}
+
+/* Effektiv-Pfade aus Basis-Markt + Journal bauen (Spieler UND Leinwand nutzen das):
+   Blockorder-Overlay × Herden-Dämpfung, plus Squeeze-Zusätze. Unberührte Werte
+   teilen sich das Basis-Array – nur betroffene werden kopiert. */
+function buildEffPaths(mkt, jr, anchor, ticks){
+  if(!jr.length) return {eff: null, squeezes: []};
+  const bySym = {};
+  for(const tr of jr) (bySym[tr.sym] = bySym[tr.sym] || []).push(tr);
+  const squeezes = findSqueezes(mkt, bySym, anchor, ticks);
+  const sqBySym = {};
+  for(const q of squeezes) (sqBySym[q.sym] = sqBySym[q.sym] || []).push(q);
+  const eff = {};
+  for(const sym in mkt.paths){
+    const base = mkt.paths[sym], trs = bySym[sym], sqs = sqBySym[sym];
+    if(!trs && !sqs){ eff[sym] = base; continue; }
+    const all = (trs || []).concat(sqs || []);
+    const a = new Array(base.length);
+    let damp = 1;
+    a[0] = base[0] * overlayAt(all, 0, anchor);
+    for(let t = 1; t < base.length; t++){
+      if(trs){
+        const s = skewAt(trs, t, anchor);
+        // Bewegungen in Gewinnrichtung der Herde laufen zäher („der Markt bewegt
+        // sich gegen die Masse"): alle short → fällt langsamer, alle long → steigt zäher.
+        if(Math.abs(s) >= 0.15){
+          const r = base[t] / base[t-1];
+          if((s > 0 && r > 1) || (s < 0 && r < 1)){
+            damp *= Math.pow(r, -DAMP_MAX * Math.abs(s));
+            damp = Math.max(1 - DAMP_CAP, Math.min(1 + DAMP_CAP, damp));
+          }
+        }
+      }
+      a[t] = base[t] * damp * overlayAt(all, t, anchor);
+    }
+    eff[sym] = a;
+  }
+  return {eff, squeezes};
+}
+
+/* Spieler-Seite: Effektiv-Pfade + Squeeze-Liste neu aufbauen (bei Journal-Zuwachs) */
+let squeezes = [];
+function rebuildEff(){
+  if(!expert || mode !== "room" || !market){ effPaths = null; squeezes = []; return; }
+  const res = buildEffPaths(market, journal, roundAnchor, matchTicks);
+  effPaths = res.eff; squeezes = res.squeezes;
+}
+
+/* Aktuelle Schieflage fürs Stimmungsband (0 = neutral) */
+function skewNow(sym){
+  if(!expert || mode !== "room" || !journal.length) return 0;
+  const trs = journal.filter(t => t.sym === sym);
+  return trs.length ? skewAt(trs, tickCount) : 0;
+}
+
+/* ====================== Experten-Modus: lokale Härten ======================
+   Rein deterministisch aus Marktdaten + eigenen Aktionen – laufen deshalb in
+   JEDEM Expert-Spiel identisch (Raum wie Sandbox), ohne Server-Beteiligung. */
+
+/* Geld-/Brief-Spanne: kleine Werte haben ein dünneres Buch (÷liq); direkt nach
+   einer News, die den Wert (oder den Gesamtmarkt) trifft, ist es ~30 s dreimal
+   so dünn – wer in die Panik hineinhandelt, zahlt extra. */
+function spreadOf(sym){
+  if(!expert) return 0;
+  let s = EXPERT_SPREAD_BASE / liqOf(sym);
+  for(const e of market.events){
+    if(e.ev.t !== sym && e.ev.t !== "ALL") continue;
+    const hit = e.tick + (e.mega ? MEGA_REACT_TICKS : REACT_TICKS);
+    if(tickCount >= hit && tickCount < hit + SPREAD_WIDE_TICKS){ s *= 3; break; }
+  }
+  return Math.min(s, 0.02);
+}
+
+/* Volatilitätsunterbrechung: nach einer Mega-Panik ist der betroffene Wert
+   (bei Marktpanik: alles) ~15 s vom Handel ausgesetzt – wie echte Circuit
+   Breaker. Wer den Crash nicht kommen sah, kommt nicht mehr raus. */
+function haltInfo(sym){
+  if(!expert) return null;
+  for(const e of market.events){
+    if(!e.mega || (e.ev.jump || 0) >= 0) continue;
+    if(e.ev.t !== sym && e.ev.t !== "ALL") continue;
+    const hit = e.tick + MEGA_REACT_TICKS;
+    if(tickCount >= hit && tickCount < hit + EXPERT_HALT_TICKS)
+      return {left: Math.ceil((hit + EXPERT_HALT_TICKS - tickCount) * TICK_MS / 1000)};
+  }
+  return null;
+}
+
+/* Vorgemerkte Limit-/Stop-Order ausführen (Auslöse-Prüfung macht processTick).
+   Bewusst schlicht: Kauf deckt Shorts zuerst ein, Verkauf nur für Longs. */
+function execPending(p, o){
+  if(haltInfo(o.sym)) return false;                    // Handelsstopp gilt auch für Orders
+  const spr = spreadOf(o.sym);
+  let px = price(o.sym);
+  const s = p.stats;
+  if(o.side === "buy"){
+    px *= 1 + spr / 2;
+    const pos = p.pos[o.sym];
+    const afford = Math.floor(p.cash / (px * (1 + feeRate(o.sym))));
+    const q = Math.min(o.qty, pos && pos.qty < 0 ? Math.min(-pos.qty, afford) : afford);
+    if(q < 1) return false;
+    const cost = q * px, fee = feeOf(cost, o.sym);
+    p.cash -= cost + fee; s.feesPaid += fee; s.trades++; s.buys++; s.volume += cost;
+    if(pos && pos.qty < 0){
+      noteClose(p, (pos.avg - px) * q, pos.avg * q);
+      pos.qty += q;
+      if(pos.qty === 0) delete p.pos[o.sym];
+      pushNews(o.sym, `📌 Order ausgeführt: ${q} × ${o.sym} eingedeckt @ ${fmt(px)}`, "up");
+    }else{
+      const lp = pos || {qty:0, avg:0};
+      lp.avg = (lp.avg * lp.qty + cost) / (lp.qty + q);
+      lp.qty += q;
+      p.pos[o.sym] = lp;
+      pushNews(o.sym, `📌 Order ausgeführt: ${q} × ${o.sym} gekauft @ ${fmt(px)}`, "up");
+    }
+    return true;
+  }
+  const pos = p.pos[o.sym];
+  if(!pos || pos.qty <= 0) return false;
+  px *= 1 - spr / 2;
+  const q = Math.min(o.qty, pos.qty);
+  const fee = feeOf(q * px, o.sym);
+  p.cash += q * px - fee; s.feesPaid += fee; s.trades++; s.sells++; s.volume += q * px;
+  noteClose(p, (px - pos.avg) * q, pos.avg * q);
+  pos.qty -= q;
+  if(pos.qty === 0) delete p.pos[o.sym];
+  pushNews(o.sym, `📌 Order ausgeführt: ${q} × ${o.sym} verkauft @ ${fmt(px)}`, "down");
+  return true;
+}
+
+/* Frische Blockorder in den News-Feed (anonym – wer war's?!) */
+function announceBlock(tr){
+  const t = Math.min(tradeTick(tr.at), tickCount);
+  pushNews(tr.sym, tr.side === "buy"
+    ? "🐘 Blockorder: Jemand kauft im großen Stil – das dürfte den Kurs gleich anschieben …"
+    : "🐘 Blockorder: Jemand wirft groß ab – da kommt gleich Druck auf den Kurs …",
+    tr.side === "buy" ? "up" : "down", Math.max(0, t));
+  lastNewsTick = tickCount;
+}
+
 /* ====================== Tick (spielt vorberechneten Markt ab) ====================== */
 let newsPaused = false;
 let lastNewsTick = -999; // für die News-Junkie-Statistik
 
-function price(sym){ return market.paths[sym][Math.min(tickCount, matchTicks)]; }
+/* price() ist DER Kurs-Zugriff des Spiels. Im Expert-Raum liefert er den Effektiv-
+   kurs (Basis × Blockorder-Overlay), überall sonst exakt den Basispfad. */
+function price(sym){ return (effPaths || market.paths)[sym][Math.min(tickCount, matchTicks)]; }
+function basePrice(sym){ return market.paths[sym][Math.min(tickCount, matchTicks)]; }
 function open_(sym){ return defOf(sym).start; }
 
 function insiderText(t){
@@ -1470,8 +1781,9 @@ function insiderText(t){
    und (außerhalb des Catch-ups) als kurzer Toast sichtbar machen. */
 function payDividend(p, announce){
   const paid = p.pendingDiv || 0;
-  if(paid <= 0){ p.pendingDiv = 0; return; }
   p.pendingDiv = 0;
+  if(Math.abs(paid) < 0.005) return;
+  // Negativ = Experten-Modus: Short-Leihgebühr / ACT-Haltekosten fließen ab
   p.cash += paid;
   p.stats.dividends = (p.stats.dividends || 0) + paid;
   if(announce) showDivToast(paid);
@@ -1480,7 +1792,9 @@ let divToastTimer = null;
 function showDivToast(amt){
   const el = $("divToast");
   if(!el) return;
-  el.textContent = "💰 +" + fmt(amt) + " $ Dividende";
+  el.textContent = amt >= 0
+    ? "💰 +" + fmt(amt) + " $ Dividende"
+    : "💸 −" + fmt(-amt) + " $ Leih-/Haltekosten";
   el.classList.remove("show"); void el.offsetWidth; // Reflow → Animation neu starten
   el.classList.add("show");
   clearTimeout(divToastTimer);
@@ -1504,14 +1818,51 @@ function processTick(showPopup){
       if(showPopup) showNewsPop({ev:{t:t.sym, txt:"🤫 " + insiderText(t)}, tag:t.dir > 0 ? "up" : "down", insider:true});
     }
   }
+  // Expert-Raum: Squeeze/Blasen-Crash zündet – die Herde muss durch dieselbe Tür
+  if(expert && mode === "room") for(const q of squeezes){
+    if(q.hitTick === tickCount){
+      const txt = q.short
+        ? "🔥 SHORT SQUEEZE: Eindeckungswelle verstärkt den Kurssprung!"
+        : "💥 Die Blase platzt: Alle wollen gleichzeitig raus!";
+      pushNews(q.sym, txt, q.side === "buy" ? "up" : "down");
+      lastNewsTick = tickCount;
+      if(showPopup) showNewsPop({ev:{t:q.sym, txt}, tag:q.side === "buy" ? "up" : "down"});
+    }
+  }
   const p = players[round], s = p.stats;
+
+  // Experten-Modus: Handelsstopp ankündigen, sobald die Mega-Panik zuschlägt
+  if(expert) for(const e of market.events){
+    if(e.mega && (e.ev.jump || 0) < 0 && e.tick + MEGA_REACT_TICKS === tickCount){
+      pushNews(e.ev.t, "⛔ Volatilitätsunterbrechung: Handel für 15 Sekunden ausgesetzt!", "down");
+      lastNewsTick = tickCount;
+    }
+  }
+
+  // Experten-Modus: vorgemerkte Limit-/Stop-Orders prüfen und ausführen
+  if(expert && p.orders && p.orders.length){
+    let hit = false;
+    for(let i = p.orders.length - 1; i >= 0; i--){
+      const o = p.orders[i];
+      const cur = price(o.sym);
+      if(o.trig === "le" ? cur > o.px : cur < o.px) continue;
+      if(execPending(p, o)){ p.orders.splice(i, 1); hit = true; }
+      else if((o.dead = (o.dead || 0) + 1) > 30) p.orders.splice(i, 1); // dauerhaft unausführbar
+    }
+    if(hit){ renderOrders(); saveSnapshot("play"); }
+  }
 
   // Dividenden: Dividenden-Aktien (und der ETF) sammeln pro Tick einen kleinen Betrag
   // an; ausgezahlt wird sichtbar gebündelt alle ~20 s. Deterministisch (kein rnd()).
-  for(const [sym, pos] of Object.entries(p.pos))
-    if(pos.qty > 0 && isDividendSym(sym))
+  // Experten-Modus: Shorts ZAHLEN die Dividende (Leihgebühr, pos.qty < 0 → negativ),
+  // und der gehebelte ACT kostet Haltegebühr – „ACT ist zum Traden, nicht zum Parken".
+  for(const [sym, pos] of Object.entries(p.pos)){
+    if(isDividendSym(sym) && (pos.qty > 0 || expert))
       p.pendingDiv = (p.pendingDiv || 0) + pos.qty * price(sym) * divRate(sym) * TICK_SCALE;
-  if(p.pendingDiv > 0 && tickCount % DIV_PAYOUT === 0) payDividend(p, showPopup);
+    if(expert && sym === ETF2_SYM && pos.qty > 0)
+      p.pendingDiv = (p.pendingDiv || 0) - pos.qty * price(sym) * EXPERT_ACT_HOLD * TICK_SCALE;
+  }
+  if(p.pendingDiv && tickCount % DIV_PAYOUT === 0) payDividend(p, showPopup);
 
   // Statistik: investierte Zeit, Depot-Spitze/-Tief, max. Rücksetzer
   if(Object.keys(p.pos).length) s.investedTicks++;
@@ -1644,10 +1995,37 @@ function noteClose(p, profit, cost){
 function trade(side){
   if(over) return;
   const p = players[round];
-  const px = price(selected);
-  const qty = curQty();
   const flash = $("flash");
+
+  // Experten-Modus: Volatilitätsunterbrechung – der Wert ist gerade nicht handelbar
+  const halt = haltInfo(selected);
+  if(halt){
+    flash.textContent = `⛔ Handel ausgesetzt (Volatilitätsunterbrechung) – noch ${halt.left} s.`;
+    flash.className = "flash err";
+    return;
+  }
+
+  let px = price(selected);
+  const px0 = px;
+  const qty = curQty();
   const pos = p.pos[selected];
+  let execQ = 0; // tatsächlich ausgeführte Stückzahl (für Slippage-Statistik/Meldung)
+
+  /* Expert-Raum: ab Blockorder-Größe rutscht der eigene Fill in den halben eigenen
+     Impact (Slippage) – Wale zahlen die Prämie, die sie erzeugen (IMPACT-PLAN.md). */
+  let blockVol = 0;
+  if(expert && mode === "room"){
+    const est = qty * px;
+    if(est >= START_CASH * BLOCK_MIN_FRAC){
+      blockVol = Math.min(2, Math.max(0.1, Math.round(est / START_CASH * 10) / 10));
+      const slip = IMPACT_BASE * blockVol / liqOf(selected) / 2;
+      px = side === "buy" ? px * (1 + slip) : px * (1 - slip);
+    }
+  }
+
+  // Experten-Modus: Geld-/Briefkurs – kaufen leicht über, verkaufen leicht unter Kurs
+  const spr = spreadOf(selected);
+  if(spr) px = side === "buy" ? px * (1 + spr / 2) : px * (1 - spr / 2);
 
   if(side === "buy"){
     if(pos && pos.qty < 0){
@@ -1662,19 +2040,23 @@ function trade(side){
       if(pos.qty === 0) delete p.pos[selected];
       noteTrade(p, q * px, "buy");
       noteClose(p, profit, pos.avg * q);
+      execQ = q;
       flash.textContent = `Eingedeckt: ${q} × ${selected} @ ${fmt(px)} (${sgn(profit)}) · Gebühr ${fmt(fee)}`;
       flash.className = "flash ok";
     }else{
-      const cost = qty * px, fee = feeOf(cost, selected);
+      // "Max" mit dem (ggf. Slippage-)Kurs neu deckeln, damit die Order nicht an Cents scheitert
+      const bqty = qtyMode === "max" ? Math.max(1, Math.floor(p.cash / (px * (1 + feeRate(selected))))) : qty;
+      const cost = bqty * px, fee = feeOf(cost, selected);
       if(cost + fee > p.cash + 0.001){ flash.textContent = "Nicht genug Bargeld."; flash.className = "flash err"; return; }
       p.cash -= cost + fee;
       p.stats.feesPaid += fee;
       const lp = pos || {qty:0, avg:0};
-      lp.avg = (lp.avg*lp.qty + cost) / (lp.qty + qty);
-      lp.qty += qty;
+      lp.avg = (lp.avg*lp.qty + cost) / (lp.qty + bqty);
+      lp.qty += bqty;
       p.pos[selected] = lp;
       noteTrade(p, cost, "buy");
-      flash.textContent = `Gekauft: ${qty} × ${selected} @ ${fmt(px)} · Gebühr ${fmt(fee)}`;
+      execQ = bqty;
+      flash.textContent = `Gekauft: ${bqty} × ${selected} @ ${fmt(px)} · Gebühr ${fmt(fee)}`;
       flash.className = "flash ok";
     }
   }else if(side === "sell"){
@@ -1691,6 +2073,7 @@ function trade(side){
     if(pos.qty === 0) delete p.pos[selected];
     noteTrade(p, sellQty * px, "sell");
     noteClose(p, profit, pos.avg * sellQty);
+    execQ = sellQty;
     flash.textContent = `Verkauft: ${sellQty} × ${selected} @ ${fmt(px)} · Gebühr ${fmt(fee)}`;
     flash.className = "flash ok";
   }else{
@@ -1710,13 +2093,92 @@ function trade(side){
     p.pos[selected] = sp;
     noteTrade(p, q * px, "sell");
     p.stats.shorts++;
+    execQ = q;
     flash.textContent = `Short: ${q} × ${selected} @ ${fmt(px)} 🐻 · Gebühr ${fmt(fee)}`;
     flash.className = "flash ok";
   }
   // Fehler-Pfade kehren oben mit return zurück – hier war die Order erfolgreich
+  if(expert && execQ > 0 && px !== px0)
+    p.stats.slip = (p.stats.slip || 0) + Math.abs(px - px0) * execQ; // Spread + Market Impact
+  if(blockVol && execQ > 0){
+    // Blockorder (anonym) an den Raum melden – fire-and-forget: ein Fehlschlag
+    // (z. B. Rate-Limit) kostet nur die Markt-Spur, nie die Order selbst.
+    flash.textContent += " · 🐘 Blockorder (Market Impact)";
+    if(mode === "room" && room && room.played)
+      api("/room/" + room.code + "/round/" + room.played + "/trade",
+          {method: "POST", body: JSON.stringify({sym: selected, side: side === "buy" ? "buy" : "sell",
+            vol: Math.min(2, Math.max(0.1, Math.round(execQ * px / START_CASH * 10) / 10))}),
+           headers: {"x-token": room.token}}).catch(() => {});
+  }
   if(tutorial) tutOnTrade(side);
   saveSnapshot("play");
   renderAll();
+}
+
+/* ===== Experten-Modus: Limit-/Stop-Orders (vormerken, processTick führt aus) =====
+   Die Auslöserichtung ergibt sich aus Kurs vs. Zielkurs: Kauf unter dem Kurs =
+   Limit (den Rücksetzer abfischen), Kauf darüber = Stop (Ausbruch/Short-Deckel);
+   Verkauf über dem Kurs = Take-Profit, darunter = Stop-Loss. */
+function placeOrder(side){
+  if(!expert || over) return;
+  const p = players[round];
+  const flash = $("flash");
+  const pxIn = parseFloat(($("ordPx").value || "").replace(",", "."));
+  if(!isFinite(pxIn) || pxIn <= 0){
+    flash.textContent = "Bitte einen Zielkurs für die Order eingeben.";
+    flash.className = "flash err"; return;
+  }
+  p.orders = p.orders || [];
+  if(p.orders.length >= EXPERT_MAX_ORDERS){
+    flash.textContent = `Maximal ${EXPERT_MAX_ORDERS} offene Orders.`;
+    flash.className = "flash err"; return;
+  }
+  const cur = price(selected);
+  const q = qtyMode === "max"
+    ? (side === "buy"
+        ? Math.floor(p.cash / (pxIn * (1 + feeRate(selected))))
+        : Math.max(0, p.pos[selected] ? p.pos[selected].qty : 0))
+    : +qtyMode;
+  if(q < 1){
+    flash.textContent = side === "buy" ? "Dafür reicht das Bargeld nicht." : "Keine Stücke im Depot.";
+    flash.className = "flash err"; return;
+  }
+  const trig = side === "buy" ? (pxIn < cur ? "le" : "ge") : (pxIn > cur ? "ge" : "le");
+  p.orders.push({sym: selected, side, px: Math.round(pxIn * 100) / 100, qty: q, trig});
+  $("ordPx").value = "";
+  const kind = side === "buy" ? (trig === "le" ? "Limit-Kauf" : "Stop-Kauf")
+                              : (trig === "ge" ? "Take-Profit" : "Stop-Loss");
+  flash.textContent = `📌 ${kind}: ${q} × ${selected} ${trig === "le" ? "≤" : "≥"} ${fmt(pxIn)}`;
+  flash.className = "flash ok";
+  renderOrders();
+  saveSnapshot("play");
+}
+
+function renderOrders(){
+  const box = $("expertOrders");
+  if(!box) return;
+  const p = players && players[round];
+  box.style.display = expert && p ? "" : "none";
+  if(!expert || !p) return;
+  const list = p.orders || [];
+  $("ordList").innerHTML = list.length
+    ? list.map((o, i) =>
+        `<div class="ord-row"><span>${o.side === "buy" ? "🟢" : "🔴"} ${o.qty} × ${o.sym} ` +
+        `${o.trig === "le" ? "≤" : "≥"} ${fmt(o.px)}</span><button class="ord-x" data-i="${i}">✕</button></div>`).join("")
+    : "";
+  $("ordList").querySelectorAll(".ord-x").forEach(b => b.onclick = () => {
+    players[round].orders.splice(+b.dataset.i, 1);
+    renderOrders();
+    saveSnapshot("play");
+  });
+}
+
+/* Schlussauktion (Expert-Raum): Endbewertung zum fairen BASIS-Kurs, damit sich
+   niemand per Last-Second-Blockorder das eigene Depot hochbewerten kann. */
+function settleTotal(p){
+  let v = p.cash;
+  for(const [sym,pos] of Object.entries(p.pos)) v += pos.qty * basePrice(sym);
+  return v;
 }
 
 function totalOf(p){
@@ -1853,6 +2315,22 @@ function renderAll(){
   chg.textContent = (ch>=0?"+":"") + ch.toFixed(2) + "%";
   chg.className = "chg " + (ch >= 0 ? "up" : "down");
 
+  // Stimmungsband (nur Expert-Raum): wo steht die Herde in diesem Wert?
+  const senti = $("senti");
+  if(senti){
+    const sk = skewNow(selected);
+    if(Math.abs(sk) < 0.1){ senti.style.display = "none"; }
+    else{
+      const n = Math.min(4, Math.ceil(Math.abs(sk) * 4));
+      senti.style.display = "";
+      senti.innerHTML = sk > 0
+        ? `Raum-Stimmung: <b class="s-long">${"🐂".repeat(n)} long</b>` +
+          (sk >= SKEW_MIN ? ' <span class="s-warn">– anfällig für schlechte News!</span>' : "")
+        : `Raum-Stimmung: <b class="s-short">${"🐻".repeat(n)} short</b>` +
+          (-sk >= SKEW_MIN ? ' <span class="s-warn">– Squeeze-Gefahr bei guten News!</span>' : "");
+    }
+  }
+
   // %-Entwicklung zum eigenen Einstand (Vorzeichen bei Short gedreht: fallender Kurs = Gewinn)
   const myPos = p.pos[selected];
   const ek = $("qEk");
@@ -1890,9 +2368,14 @@ function renderAll(){
   }else{
     $("orderInfo").textContent = `${qty} Stück ≈ ${fmt(qty*px)} · Short möglich: ${cap} Stk`;
   }
-  $("buyBtn").disabled = over || (isShort ? p.cash < px : qty*px > p.cash + 0.001);
-  $("sellBtn").disabled = over || held <= 0;
-  $("shortBtn").disabled = over || held > 0 || cap < 1;
+  // Experten-Modus: Volatilitätsunterbrechung sperrt den Handel im betroffenen Wert
+  const halted = haltInfo(selected);
+  $("orderInfo").innerHTML = halted
+    ? `<span style="color:var(--down);font-weight:700">⛔ Handel ausgesetzt – noch ${halted.left} s (Volatilitätsunterbrechung)</span>`
+    : $("orderInfo").textContent;
+  $("buyBtn").disabled = over || !!halted || (isShort ? p.cash < px : qty*px > p.cash + 0.001);
+  $("sellBtn").disabled = over || !!halted || held <= 0;
+  $("shortBtn").disabled = over || !!halted || held > 0 || cap < 1;
 
   // Depot
   $("cash").textContent = fmt(p.cash);
@@ -1909,6 +2392,10 @@ function renderAll(){
   if(divTot >= 0.005){
     divEl.innerHTML = `💰 Dividende kassiert: <b>+${fmt(p.stats.dividends || 0)}</b>` +
       `<span class="div-pending">(+${fmt(p.pendingDiv || 0)} läuft auf)</span>`;
+    divEl.style.display = "";
+  }else if(divTot <= -0.005){
+    // Experten-Modus: Short-Leihgebühr/ACT-Haltekosten überwiegen – Abfluss zeigen
+    divEl.innerHTML = `💸 Leih-/Haltekosten gezahlt: <b style="color:var(--down)">−${fmt(-divTot)}</b>`;
     divEl.style.display = "";
   }else{
     divEl.style.display = "none";
@@ -1966,7 +2453,7 @@ function drawChart(o){
   const cv = o.canvas || $("chart");
   if(!cv.clientWidth) return;
   const sym  = o.sym || selected;
-  const mkt  = o.market || market;
+  const mkt  = o.market || (effPaths ? {paths: effPaths} : market); // Expert-Raum: Effektivkurse
   const tc   = o.tick != null ? o.tick : tickCount;
   const pos  = ("pos" in o) ? o.pos : (players[round] ? players[round].pos[sym] : null);
   const cmode = o.chartMode || chartMode;
@@ -2204,7 +2691,8 @@ function endRound(){
   const p = players[round];
   payDividend(p, false); // letzte aufgelaufene Dividende noch auszahlen
   renderAll();
-  const tot = totalOf(p);
+  // Expert-Raum: Schlussauktion zum fairen Basiskurs (siehe settleTotal)
+  const tot = (expert && mode === "room") ? settleTotal(p) : totalOf(p);
   p.result = {total: tot, pnl: tot - START_CASH};
 
   // Tutorial: kein Duell-Ergebnis, der Coach übernimmt den Abschluss
@@ -2213,7 +2701,9 @@ function endRound(){
     return;
   }
 
-  if(!sandbox){ updateRecord(p); appendGameHistory(p); } // Rekord + Historie auf diesem Gerät fortschreiben
+  // Rekord + Historie fortschreiben; der Rekord bleibt Expert-Runden fern
+  // (anderes Kapital/Regeln → nicht vergleichbar), die Historie nicht.
+  if(!sandbox){ if(!expert) updateRecord(p); appendGameHistory(p); }
 
   // Eine Runde, eigenes Ergebnis: Einzelspieler oder jedes Remote-Gerät
   if(mode === "solo" || wallClock()){
@@ -2307,7 +2797,10 @@ function buildAnalysis(list){
     ["Short-Orders",       p => p.stats.shorts],
     ["Handelsvolumen",     p => fmt(p.stats.volume)],
     ["Gebühren gezahlt",   p => (p.stats.feesPaid||0) < 0.005 ? "–" : `<span style="color:var(--down)">−${fmt(p.stats.feesPaid)}</span>`],
-    ["Dividenden",         p => (p.stats.dividends||0) < 0.005 ? "–" : `<span style="color:var(--up)">+${fmt(p.stats.dividends)}</span>`],
+    ["Dividenden",         p => Math.abs(p.stats.dividends||0) < 0.005 ? "–"
+                             : (p.stats.dividends > 0 ? `<span style="color:var(--up)">+${fmt(p.stats.dividends)}</span>`
+                                                      : `<span style="color:var(--down)">−${fmt(-p.stats.dividends)}</span>`)],
+    ["Spread & Impact",    p => (p.stats.slip||0) < 0.005 ? "–" : `<span style="color:var(--down)">−${fmt(p.stats.slip)}</span>`],
     ["Realisierte Gewinne",p => `<span style="color:${col(p.stats.realized)}">${sgn(p.stats.realized)}</span>`],
     ["Bester Deal",        p => p.stats.best  === null ? "–" : `<span style="color:${col(p.stats.best)}">${sgn(p.stats.best)}</span>`],
     ["Schwächster Deal",   p => p.stats.worst === null ? "–" : `<span style="color:${col(p.stats.worst)}">${sgn(p.stats.worst)}</span>`],
@@ -2335,6 +2828,17 @@ function buildAnalysis(list){
 /* Ohne Server: Jeder kopiert sein Ergebnis als kompakten Code (Base64) und
    schickt ihn dem Gegner (z. B. per Messenger). Eingefügt ergibt das die volle
    Duell-Ansicht mit Krone und zweispaltiger Analyse. */
+/* Kurzer Streuwert über das Blockorder-Journal: Ergebnisse einer Expert-Runde tragen
+   ihn mit, damit die Rangliste erkennen kann, ob alle dieselbe Überlagerung gespielt
+   haben (Manipulations-/Sync-Schutz, siehe IMPACT-PLAN.md). */
+function journalHash(){
+  if(!expert || !journal.length) return 0;
+  const s = journal.map(t => t.id + ":" + t.at + ":" + t.sym + ":" + t.side + ":" + t.vol).join(";");
+  let h = 5381;
+  for(let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+  return h;
+}
+
 function packResult(p){
   const s = p.stats;
   const f = [gameCode, p.name, p.result.pnl.toFixed(2), p.result.total.toFixed(2),
@@ -2345,27 +2849,33 @@ function packResult(p){
              s.peak.toFixed(2), s.trough.toFixed(2), s.maxDD.toFixed(2),
              s.tipTrades, s.bestPct.toFixed(4), favSym(p),
              (s.feesPaid||0).toFixed(2), (s.dividends||0).toFixed(2),
-             (marketSeed == null ? gameCode : marketSeed) >>> 0]; // Feld 23: Markt-Seed (Online ≠ Code)
-  return "SPCX5." + btoa(unescape(encodeURIComponent(f.join("|"))));
+             (marketSeed == null ? gameCode : marketSeed) >>> 0, // Feld 23: Markt-Seed (Online ≠ Code)
+             expert ? 1 : 0, START_CASH,                         // Feld 24/25: Expert-Flag + Startkapital
+             (s.slip||0).toFixed(2), journalHash()];             // Feld 26/27: Slippage + Journal-Hash
+  return "SPCX6." + btoa(unescape(encodeURIComponent(f.join("|"))));
 }
 
 // expectCode: gegen welchen Spiel-Code geprüft wird (Default = laufendes Spiel;
 // für den Historien-Vergleich wird der Code des jeweiligen Eintrags übergeben).
 function unpackResult(str, expectCode){
-  // SPCX5 = aktuell (trägt den Markt-Seed mit), SPCX4 = ältere Ergebnisse ohne Seed
-  const v5 = str.startsWith("SPCX5."), v4 = str.startsWith("SPCX4.");
-  if(!v5 && !v4) return null;
+  // SPCX6 = aktuell (Expert-Flag/Kapital/Slippage/Journal-Hash), SPCX5 = mit Seed,
+  // SPCX4 = älteste noch lesbare Form ohne Seed
+  const v6 = str.startsWith("SPCX6."), v5 = str.startsWith("SPCX5."), v4 = str.startsWith("SPCX4.");
+  if(!v6 && !v5 && !v4) return null;
   let f;
   try{ f = decodeURIComponent(escape(atob(str.slice(6)))).split("|"); }catch(e){ return null; }
-  if(f.length !== (v5 ? 24 : 23)) return null;
+  if(f.length !== (v6 ? 28 : v5 ? 24 : 23)) return null;
   const code = +f[0];
   if(code !== (expectCode === undefined ? gameCode : expectCode)) return {wrongGame:true};
   const nums = [2,3,4,5,6,7,8,9,12,13,14,15,16,17,18,19,21,22].map(i => parseFloat(f[i]));
   if(nums.some(isNaN)) return null;
-  if(v5 && isNaN(+f[23])) return null;
+  if((v5 || v6) && isNaN(+f[23])) return null;
   return {
     gameCode: code,
-    seed: v5 ? (+f[23] >>> 0) : undefined,
+    seed: (v5 || v6) ? (+f[23] >>> 0) : undefined,
+    expert: v6 ? +f[24] === 1 : false,
+    cash: v6 ? +f[25] : 25000,
+    jhash: v6 ? (+f[27] >>> 0) : undefined,
     name: f[1].slice(0,14) || "Gegner",
     result:{pnl:+f[2], total:+f[3]},
     stats:{trades:+f[4], buys:+f[5], sells:+f[6], shorts:+f[7], volume:+f[8], realized:+f[9],
@@ -2374,7 +2884,7 @@ function unpackResult(str, expectCode){
            allIns:+f[12], newsTrades:+f[13], investedTicks:+f[14],
            peak:+f[15], trough:+f[16], maxDD:+f[17],
            tipTrades:+f[18], bestPct:+f[19], perSym:{}, _fav:f[20].slice(0,24),
-           feesPaid:+f[21], dividends:+f[22]},
+           feesPaid:+f[21], dividends:+f[22], slip: v6 ? +f[26] : 0},
   };
 }
 
@@ -2384,7 +2894,7 @@ function extractResultCode(raw){
   raw = (raw || "").trim();
   const link = raw.match(/[?&]vs=([^&\s]+)/);          // kompletter Teil-Link eingefügt
   if(link){ try{ return decodeURIComponent(link[1]); }catch(e){} }
-  const code = raw.match(/SPCX[45]\.[A-Za-z0-9+/=]+/); // Code irgendwo im Text
+  const code = raw.match(/SPCX[456]\.[A-Za-z0-9+/=]+/); // Code irgendwo im Text
   return code ? code[0] : raw;
 }
 
@@ -2460,8 +2970,8 @@ $("cmpBtn").onclick = () => {
 /* ====================== Statistik-Seite ====================== */
 let statsGames = [], statsCmpIdx = -1, cmpFromStats = false;
 
-const peekCode = str => {           // Spiel-Code (Feld 0) aus einem SPCX4/SPCX5-String lesen
-  if(!str || !/^SPCX[45]\./.test(str)) return null;
+const peekCode = str => {           // Spiel-Code (Feld 0) aus einem SPCX4/5/6-String lesen
+  if(!str || !/^SPCX[456]\./.test(str)) return null;
   try{ return +decodeURIComponent(escape(atob(str.slice(6)))).split("|")[0]; }catch(e){ return null; }
 };
 
@@ -2804,6 +3314,8 @@ $("coachExit").onclick = exitTutorial;
 
 $("tutBtn").onclick = () => {
   tutorial = true;
+  expert = false; // der Coach unterrichtet die Grundregeln – keine Experten-Härten
+  START_CASH = 25000;
   gameCode = 0;
   mode = "local";
   matchTicks = TUT_TICKS;
@@ -2825,6 +3337,8 @@ $("npSkip").onclick = closeNewsPop;
 $("buyBtn").onclick = () => trade("buy");
 $("sellBtn").onclick = () => trade("sell");
 $("shortBtn").onclick = () => trade("short");
+$("ordBuyBtn").onclick = () => placeOrder("buy");
+$("ordSellBtn").onclick = () => placeOrder("sell");
 document.querySelectorAll(".chip").forEach(c => c.onclick = () => {
   qtyMode = c.dataset.q;
   document.querySelectorAll(".chip").forEach(x => x.classList.toggle("active", x === c));

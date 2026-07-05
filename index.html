@@ -75,6 +75,13 @@
         <button class="dur cap" data-cap="100000">100.000 $</button>
       </div>
     </div>
+    <!-- 🎓 Experten-Modus in der Sandbox: die lokalen Härten zum Üben -->
+    <div class="field" id="expField" style="display:none">
+      <button class="opt-row" id="sbExpertToggle"><span class="opt-check">☐</span>
+        <span class="opt-body"><b>🎓 Experten-Modus</b>
+        <span class="opt-sub">Spread · Limit-/Stop-Orders · Handelsstopp · Short-Leihgebühr · ACT-Haltekosten – hier gefahrlos üben</span></span>
+      </button>
+    </div>
     <div class="field" id="fieldCode" style="display:none">
       <label>Spiel-Code (zum Beitreten)</label>
       <input id="codeIn" type="text" inputmode="numeric" maxlength="6"
@@ -173,6 +180,23 @@
         <div class="code-err" id="roomErr"></div>
       </div>
       <div class="mode-hint" id="roomWaitHint" style="display:none;text-align:center;margin-top:10px"></div>
+      <!-- Runden-Optionen: eigener Block unterhalb des Start-Bereichs, nur für den Ersteller -->
+      <div class="field" id="roomOptField" style="display:none">
+        <label>Runden-Optionen</label>
+        <button class="opt-row" id="expertToggle"><span class="opt-check">☐</span>
+          <span class="opt-body"><b>🎓 Experten-Modus</b>
+          <span class="opt-sub">Blockorders bewegen den Markt · Squeeze · Spread · Limit-Orders · Handelsstopp · Short-Leihgebühr</span></span>
+        </button>
+        <div id="expertCash" style="display:none;margin-top:10px">
+          <label>💰 Startkapital</label>
+          <div class="dur-row">
+            <button class="dur rcash" data-c="10000">10k $</button>
+            <button class="dur rcash" data-c="25000">25k $</button>
+            <button class="dur rcash" data-c="50000">50k $</button>
+            <button class="dur rcash" data-c="100000">100k $</button>
+          </div>
+        </div>
+      </div>
       <div class="field">
         <label>Im Raum · <span id="roomCount" class="room-count"></span></label>
         <div id="roomMembers"></div>
@@ -250,6 +274,7 @@
       <span class="chg ek" id="qEk" style="display:none"></span>
       <span class="qname" id="qName"></span>
     </div>
+    <div class="senti" id="senti" style="display:none"></div>
     <div class="chart-bar">
       <div class="chart-toggle" id="chartToggle">
         <button class="ctg active" data-cm="line">📈 Linie</button>
@@ -273,6 +298,15 @@
         <button class="btn short" id="shortBtn">Short 🐻</button>
       </div>
       <div class="order-info" id="orderInfo"></div>
+      <!-- 🎓 Experten-Modus: Limit-/Stop-Orders (Stückzahl kommt aus den Chips oben) -->
+      <div id="expertOrders" style="display:none">
+        <div class="ord-new">
+          <input id="ordPx" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Zielkurs">
+          <button class="btn buy ord-btn" id="ordBuyBtn">📌 Kauf</button>
+          <button class="btn sell ord-btn" id="ordSellBtn">📌 Verkauf</button>
+        </div>
+        <div id="ordList"></div>
+      </div>
       <div class="flash" id="flash"></div>
     </div>
     </div>
