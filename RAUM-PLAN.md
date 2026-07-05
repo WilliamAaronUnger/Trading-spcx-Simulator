@@ -1,6 +1,10 @@
 # Plan: Online-Raum (3. Modus) + Leinwand-Rolle
 
-Status: **Phase 1 (Server v3) fertig** — worker.test.js 49/49 grün; liegt auf dem Feature-
+Status: **Phase 1 + 2 fertig (Server v3 + Client)** — 49 Worker- + 34 E2E-Checks grün,
+inkl. Null-Request-Beweis für den Offline-Modus. Gemeinsamer Merge auf main deployt App
+und Worker zusammen. Offen: Phase 3 (Leinwand-Großbild).
+
+Alt-Status: Phase 1 (Server v3) fertig — worker.test.js 49/49 grün; liegt auf dem Feature-
 Branch und wird BEWUSST erst zusammen mit Phase 2 (Client) auf main gemerged, weil der
 Worker sich beim Merge automatisch deployt und App+Server zusammen wechseln müssen.
 e2e.test.js ist bis Phase 2 vorübergehend veraltet (testet noch die alte /game-Welt).
@@ -54,7 +58,7 @@ Summen-P&L). TTL: 24 h nach `lastActive` (aktiver Abend läuft nie aus); Aufräu
 Eröffnen. Alte `/game/*`-Routen entfallen (wir kontrollieren beide Seiten, App + Worker
 deployen im selben Push).
 
-## Phase 2 — Client (game.js/index.html/styles.css)
+## Phase 2 — Client (game.js/index.html/styles.css) — ✅ umgesetzt
 
 - Moduswahl: dritter Unter-Button 🌐 Online-Raum (`mode="room"`); `MODE_HINTS`/Regeltext.
   „Mehrere Geräte" verliert JEDEN api()-Aufruf (strikt offline, alter Minuten-Flow bleibt).
