@@ -170,6 +170,31 @@ const noop=()=>{};
     out["3er: Detailvergleich per Tipp (Ben)"]= !!captured && captured.opp.name==="Ben";
     localStorage.removeItem("spcx-duell-lobby");
 
+    // === Online-Revanche: A bietet an, B sieht und tritt bei ===
+    restore(A2); // A ist im alten 2er-Spiel
+    const oldCode = onlineGame.code;
+    await $id("rematchOnlineBtn").onclick();
+    out["Revanche: A hat neues Spiel (p1)"]= !!onlineGame && onlineGame.p===1 && onlineGame.code!==oldCode;
+    const newCode = onlineGame.code;
+    const oldSt = await (await fetch(ONLINE_API+"/game/"+oldCode)).json();
+    out["Revanche: alter Raum kennt den neuen Code"]= oldSt.next===newCode;
+    const A3ctx = stash();
+    localStorage.removeItem("spcx-duell-lobby"); // B = anderes Geraet, eigener Speicher
+    restore(B3); // B haengt noch im alten Ergebnis-Screen
+    startRematchWatch();
+    await rematchTick();
+    out["Revanche: B sieht den Beitritts-Knopf"]= rematchNextCode===newCode
+      && $id("rematchJoinBtn").textContent.indexOf(newCode)>=0;
+    $id("rematchJoinBtn").onclick();
+    await new Promise(res => { const t0=Date.now(); (function wait(){ (onlineGame && onlineGame.code===newCode) || Date.now()-t0>500 ? res() : Promise.resolve().then(wait); })(); });
+    out["Revanche: B ist im neuen Spiel (p2)"]= !!onlineGame && onlineGame.code===newCode && onlineGame.p===2;
+    const nSt = await (await fetch(ONLINE_API+"/game/"+newCode)).json();
+    out["Revanche: neues Spiel hat 2 Spieler"]= nSt.players.length===2;
+    // A koennte jetzt starten (voller Kreislauf moeglich)
+    restore(A3ctx); await pollLobby();
+    out["Revanche: A sieht B im neuen Spiel"]= $id("lobbyOpp").textContent.indexOf("Dabei (2)")>=0;
+    localStorage.removeItem("spcx-duell-lobby");
+
     // === Reload-Robustheit: Ersteller verliert die Seite und kommt zurück ===
     // Neues Spiel als Ersteller C anlegen
     onlineGame=null; marketSeed=null; market=null; startAt=0; durationMin=5; codeIn.value="";
