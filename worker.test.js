@@ -143,6 +143,17 @@ function ok(cond, name){ console.log((cond ? "✔ " : "✘ ") + name); cond ? pa
   ok((await call("PUT", `/game/${g1.code}/pnl/1`, jbody({pnl: "quatsch"}), {"x-token": g1.token})).status === 400, "kaputter P&L → 400");
   ok((await call("GET", `/game/${g4.code}/pnl`)).status === 200, "GET P&L auch ohne Meldungen (leer)");
 
+  // ---- Revanche: neuen Code am alten Spiel hinterlegen ----
+  const gN = await (await call("POST", "/game", jbody({dur: 10, name: "Anna"}))).json(); // Revanche-Zielspiel
+  ok((await call("POST", `/game/${g1.code}/rematch`, jbody({token: "falsch", next: gN.code}))).status === 403, "Revanche mit fremdem Token → 403");
+  ok((await call("POST", `/game/${g1.code}/rematch`, jbody({token: g1.token, next: "000001"}))).status === 400, "Revanche auf unbekanntes Spiel → 400");
+  ok((await call("POST", `/game/${g1.code}/rematch`, jbody({token: g1.token, next: g1.code}))).status === 400, "Revanche auf sich selbst → 400");
+  ok((await call("POST", `/game/${g1.code}/rematch`, jbody({token: j2.token, next: gN.code}))).status === 200, "Mitspieler (nicht nur Ersteller) darf Revanche anbieten");
+  st = await (await call("GET", "/game/" + g1.code)).json();
+  ok(st.next === gN.code, "GET zeigt die angebotene Revanche");
+  ok((await call("POST", `/game/${g1.code}/rematch`, jbody({token: g1.token, next: gN.code}))).status === 409, "zweite Revanche → 409 (write-once)");
+  ok(!("next" in (await (await call("GET", "/game/" + gN.code)).json())), "neues Spiel selbst hat keine Revanche");
+
   // ---- Routing/CORS ----
   ok((await call("GET", "/game/000001")).status === 404, "unbekanntes Spiel → 404");
   ok((await call("GET", "/game/abc")).status === 400, "kaputter Code → 400");

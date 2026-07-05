@@ -15,8 +15,8 @@ Evaluationen), `ONLINE-PLAN.md` (Architektur der Online-Schicht), `CLAUDE.md` (C
   Dashboard den Worker per „Settings → Build" mit dem GitHub-Repo verbinden (Build command
   leer, Deploy `npx wrangler deploy`, Branch-Previews AUS). Der erste Build deployt dann
   automatisch die pnl-Endpunkte für A1.
-- **A1 (Live-Rennen) umgesetzt** — Worker-Endpunkte + Live-Leiste in der Topbar.
-- **Danach als Nächstes: A2 (Online-Revanche), dann A9 (Leinwand).**
+- **A1 (Live-Rennen) und A2 (Online-Revanche) umgesetzt.**
+- **Danach als Nächstes: A9 (Leinwand) — oder A3 (Tages-Challenge).**
 - Neu aufgenommen: A9 (Leinwand-/Moderator-Ansicht) und A10 (dynamischer Online-Markt)
   — Details und Bewertung in `IDEAS.md`.
 
@@ -32,7 +32,7 @@ Aus „jeder spielt für sich, Vergleich am Ende" wird ein echtes Kopf-an-Kopf-R
 mit Throttling + ein Sammel-GET), Client: kleine Live-Leiste unter der Topbar.
 *Aufwand: 1 Session. Fairness: unkritisch (reine Anzeige).*
 
-### A2. Online-Revanche
+### A2. Online-Revanche — ✅ umgesetzt (Juli 2026)
 Nach dem Duell „🔁 Revanche" → legt automatisch ein neues Spiel an und lädt dieselbe Runde
 per Push-Nachricht in der alten Spiel-Ressource ein („Revanche unter Code XXXXXX!") — die
 Gegner sehen den Hinweis im Ergebnis-Screen und treten mit einem Tipp bei. Nimmt die letzte

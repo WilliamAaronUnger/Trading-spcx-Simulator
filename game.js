@@ -962,6 +962,59 @@ function showRankDetail(p){
   $("rankBack").style.display = "";
 }
 $("rankBack").onclick = () => { showRankView(); renderRanking(); };
+/* ===== Online-Revanche: neues Spiel für dieselbe Runde =====
+   Jeder Mitspieler kann vom Ergebnis-Screen aus eine Revanche anbieten (legt ein neues
+   Online-Spiel an und hinterlegt den Code am alten). Die anderen sehen den Beitritts-Knopf
+   automatisch — das alte Spiel ist der Kanal, kein manuelles Teilen mehr nötig. */
+let rematchTimer = null, rematchWatch = null, rematchNextCode = null;
+function startRematchWatch(){
+  clearInterval(rematchTimer);
+  rematchNextCode = null;
+  rematchWatch = onlineGame ? {og: onlineGame, deadline: Date.now() + 15*60000} : null;
+  if(rematchWatch){ rematchTimer = setInterval(rematchTick, 4000); rematchTick(); }
+}
+async function rematchTick(){
+  const w = rematchWatch;
+  if(!w || onlineGame !== w.og || Date.now() > w.deadline){ clearInterval(rematchTimer); return; }
+  let st;
+  try{ st = await apiJson("/game/" + w.og.code); }catch(e){ return; }
+  if(st.next && onlineGame === w.og){
+    clearInterval(rematchTimer);
+    rematchNextCode = st.next;
+    $("rematchOnlineBtn").style.display = "none"; // jemand war schneller → beitreten statt anbieten
+    const b = $("rematchJoinBtn");
+    b.textContent = "🔁 Revanche angeboten – beitreten (Code " + st.next + ")";
+    b.style.display = "";
+  }
+}
+$("rematchOnlineBtn").onclick = async function(){
+  const old = onlineGame;
+  if(!old) return;
+  this.disabled = true;
+  // Neues Online-Spiel über den normalen Anlegen-Pfad erzeugen (öffnet die Lobby)
+  $("overlay").classList.remove("show");
+  $("matchScreen").classList.remove("show");
+  $("startScreen").classList.add("show");
+  setTop("multi"); setMode("remote");
+  codeIn.value = "";
+  await $("startBtn").onclick();
+  this.disabled = false;
+  // dem alten Spiel den neuen Code melden → bei den anderen erscheint der Beitritts-Knopf
+  if(onlineGame && onlineGame !== old){
+    try{
+      await api("/game/" + old.code + "/rematch",
+                {method: "POST", body: JSON.stringify({token: old.token, next: onlineGame.code})});
+    }catch(e){ /* 409 = jemand war schneller; die eigene Lobby bleibt trotzdem spielbar */ }
+  }
+};
+$("rematchJoinBtn").onclick = function(){
+  if(!/^\d{6}$/.test(rematchNextCode || "")) return;
+  $("overlay").classList.remove("show");
+  $("matchScreen").classList.remove("show");
+  applyJoinCode(rematchNextCode); // Start-Screen, Modus + Code vorbereitet
+  $("startBtn").onclick();        // direkt beitreten → Lobby
+};
+
 /* ===== Live-Rennen: eigenen P&L melden + alle abholen (nur Online-Runden) =====
    Reine Anzeige (nur die Zahl, nie Positionen) – Fairness unberührt. ~Alle 5 s ein
    PUT + GET; Netzfehler werden still geschluckt, die Leiste zeigt dann alte Werte. */
@@ -2248,6 +2301,7 @@ function runStatsCompare(entry, oppRaw, errEl){
   errEl.textContent = "";
   // Ansicht sicher auf den klassischen Zwei-Spalten-Vergleich stellen
   rankGame = null; clearTimeout(rankTimer);
+  $("rematchOnlineBtn").style.display = "none"; $("rematchJoinBtn").style.display = "none";
   $("rankBox").style.display = "none"; $("rankBack").style.display = "none";
   document.querySelector(".res-row").style.display = "";
   $("analysis").style.display = "";
@@ -2314,14 +2368,20 @@ function showResultSolo(p){
   $("analysis").style.display = "";
   $("resCode").textContent = String(gameCode).padStart(6,"0");
   $("rematchBtn").textContent = "Neues Spiel";
+  // Online-Revanche: anbieten können alle Mitspieler; angebotene erscheint automatisch
+  const online = !solo && !sandbox && onlineGame;
+  $("rematchOnlineBtn").style.display = online ? "" : "none";
+  $("rematchOnlineBtn").disabled = false;
+  $("rematchJoinBtn").style.display = "none";
   $("overlay").classList.add("show");
   // Online-Duell: Ergebnis hochladen; 2 Spieler → Auto-Vergleich, 3+ → Rangliste
-  if(!solo && !sandbox && onlineGame) onlineShareResult(p);
+  if(online){ onlineShareResult(p); startRematchWatch(); }
 }
 
 function showResult(){
   clearSnapshot(); // Duell entschieden – Snapshot entfernen
   rankGame = null; clearTimeout(rankTimer); // falls zuvor eine Online-Rangliste offen war
+  $("rematchOnlineBtn").style.display = "none"; $("rematchJoinBtn").style.display = "none";
   $("rankBox").style.display = "none"; $("rankBack").style.display = "none";
   document.querySelector(".res-row").style.display = "";
   $("analysis").style.display = "";

@@ -22,6 +22,8 @@
      GET  /game/{code}/result/{p}      → Text | 404
      PUT  /game/{code}/pnl/{p} {pnl}   → 200                       Live-Rennen: eigenen P&L melden (x-token, erst nach Start)
      GET  /game/{code}/pnl             → {pnls:{p:v,…}}            Live-Rennen: alle P&L abholen
+     POST /game/{code}/rematch {token, next} → 200                 Revanche: neuen Spiel-Code am alten Spiel hinterlegen
+                                          (Token eines Mitspielers; write-once; next muss existieren)
 
    Einträge älter als 24 h gelten als abgelaufen und werden beim Anlegen neuer Spiele
    gelöscht – räumt sich selbst auf. */
@@ -50,7 +52,9 @@ let schemaReady = false;
 async function ensureSchema(db){
   if(schemaReady) return;
   await db.prepare(`CREATE TABLE IF NOT EXISTS games(
-    code TEXT PRIMARY KEY, seed INTEGER, dur INTEGER, created INTEGER, startAt INTEGER)`).run();
+    code TEXT PRIMARY KEY, seed INTEGER, dur INTEGER, created INTEGER, startAt INTEGER, next TEXT)`).run();
+  // Bestands-Datenbanken um die Revanche-Spalte ergänzen (idempotent: Fehler = existiert schon)
+  try{ await db.prepare("ALTER TABLE games ADD COLUMN next TEXT").run(); }catch(e){}
   await db.prepare(`CREATE TABLE IF NOT EXISTS players(
     code TEXT, p INTEGER, token TEXT, name TEXT, PRIMARY KEY(code, p))`).run();
   await db.prepare(`CREATE TABLE IF NOT EXISTS results(
@@ -123,6 +127,7 @@ async function route(req, db){
     const pl = (await db.prepare("SELECT p, name FROM players WHERE code = ? ORDER BY p").bind(code).all()).results;
     const out = {dur: g.dur, startAt: g.startAt, players: pl, joined: pl.length >= 2};
     if(g.startAt) out.seed = g.seed;
+    if(g.next) out.next = g.next; // angebotene Revanche (neuer Beitritts-Code)
     return json(out);
   }
 
@@ -155,6 +160,26 @@ async function route(req, db){
             .bind(now + START_DELAY_MS, code).run();
     const cur = await db.prepare("SELECT startAt, seed FROM games WHERE code = ?").bind(code).first();
     return json({startAt: cur.startAt, seed: cur.seed});
+  }
+
+  // Revanche: jeder Mitspieler des alten Spiels darf EINEN neuen Code hinterlegen
+  // (write-once; der neue Code muss ein existierendes Spiel sein). Die anderen sehen
+  // ihn über GET /game/{code} und treten mit einem Tipp bei.
+  if(rest[0] === "rematch" && rest.length === 1){
+    if(req.method !== "POST") return err(405, "method");
+    const body = await readJson(req);
+    const next = body && String(body.next || "");
+    if(!body || !/^\d{6}$/.test(next) || next === code) return err(400, "next");
+    const isPlayer = await db.prepare("SELECT 1 AS x FROM players WHERE code = ? AND token = ?")
+                             .bind(code, String(body.token || "")).first();
+    if(!isPlayer) return err(403, "token");
+    const target = await db.prepare("SELECT 1 AS x FROM games WHERE code = ? AND created >= ?")
+                           .bind(next, now - TTL_MS).first();
+    if(!target) return err(400, "next");
+    const r = await db.prepare("UPDATE games SET next = ? WHERE code = ? AND next IS NULL")
+                      .bind(next, code).run();
+    if(r.meta.changes !== 1) return err(409, "exists");
+    return json({ok: true, next});
   }
 
   // Live-Rennen: P&L melden/abholen – reine Anzeige-Daten, klein und überschreibbar
