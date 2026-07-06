@@ -218,7 +218,7 @@ function newPlayer(name, color){
   return {name, cash:START_CASH, pos:{}, color, result:null, pendingDiv:0, orders:[],
           stats:{trades:0, buys:0, sells:0, shorts:0, volume:0, realized:0, best:null, worst:null,
                  allIns:0, newsTrades:0, tipTrades:0, bestPct:0, investedTicks:0, perSym:{},
-                 peak:START_CASH, trough:START_CASH, maxDD:0, feesPaid:0, dividends:0, slip:0}};
+                 peak:START_CASH, trough:START_CASH, maxDD:0, feesPaid:0, dividends:0, slip:0, contra:0}};
 }
 
 /* ====================== Lokaler Speicher (Namen + Rekord) ====================== */
@@ -1374,7 +1374,7 @@ function execPending(p, o){
     const cost = q * px, fee = feeOf(cost, o.sym);
     p.cash -= cost + fee; s.feesPaid += fee; s.trades++; s.buys++; s.volume += cost;
     if(pos && pos.qty < 0){
-      noteClose(p, (pos.avg - px) * q, pos.avg * q);
+      noteClose(p, (pos.avg - px) * q, pos.avg * q, o.sym, -1);
       pos.qty += q;
       if(pos.qty === 0) delete p.pos[o.sym];
       pushNews(o.sym, `📌 Order ausgeführt: ${q} × ${o.sym} eingedeckt @ ${fmt(px)}`, "up");
@@ -1392,7 +1392,7 @@ function execPending(p, o){
     q = Math.min(o.qty, pos.qty);
     const fee = feeOf(q * px, o.sym);
     p.cash += q * px - fee; s.feesPaid += fee; s.trades++; s.sells++; s.volume += q * px;
-    noteClose(p, (px - pos.avg) * q, pos.avg * q);
+    noteClose(p, (px - pos.avg) * q, pos.avg * q, o.sym, 1);
     pos.qty -= q;
     if(pos.qty === 0) delete p.pos[o.sym];
     pushNews(o.sym, `📌 Order ausgeführt: ${q} × ${o.sym} verkauft @ ${fmt(px)}`, "down");
@@ -1641,12 +1641,21 @@ function noteTrade(p, value, side){
     s.tipTrades++;
 }
 
-/* cost = eingesetztes Kapital des geschlossenen Teils (für die %-Rendite des Deals) */
-function noteClose(p, profit, cost){
+/* cost = eingesetztes Kapital des geschlossenen Teils (für die %-Rendite des Deals).
+   sym/dir (nur Expert-Raum) = Wert und Positionsrichtung (+1 Long, −1 Short) des
+   geschlossenen Teils: Gewinn GEGEN eine ausgeprägte Raum-Schieflage zählt als
+   antizyklischer Erfolg (🎯 Gegen den Strom). Außerhalb des Expert-Raums ist
+   skewNow()==0, die Prüfung also inert. */
+function noteClose(p, profit, cost, sym, dir){
   p.stats.realized += profit;
   if(cost > 0) p.stats.bestPct = Math.max(p.stats.bestPct, profit / cost);
   p.stats.best  = p.stats.best  === null ? profit : Math.max(p.stats.best,  profit);
   p.stats.worst = p.stats.worst === null ? profit : Math.min(p.stats.worst, profit);
+  if(profit > 0 && sym && dir){
+    const sk = skewNow(sym);                          // >0 = Herde long, <0 = Herde short
+    if(dir * sk < 0 && Math.abs(sk) >= SKEW_MIN)      // eigene Position der Masse entgegen
+      p.stats.contra = (p.stats.contra || 0) + profit;
+  }
 }
 
 function trade(side){
@@ -1696,7 +1705,7 @@ function trade(side){
       pos.qty += q;
       if(pos.qty === 0) delete p.pos[selected];
       noteTrade(p, q * px, "buy");
-      noteClose(p, profit, pos.avg * q);
+      noteClose(p, profit, pos.avg * q, selected, -1);
       execQ = q;
       flash.textContent = `Eingedeckt: ${q} × ${selected} @ ${fmt(px)} (${sgn(profit)}) · Gebühr ${fmt(fee)}`;
       flash.className = "flash ok";
@@ -1729,7 +1738,7 @@ function trade(side){
     pos.qty -= sellQty;
     if(pos.qty === 0) delete p.pos[selected];
     noteTrade(p, sellQty * px, "sell");
-    noteClose(p, profit, pos.avg * sellQty);
+    noteClose(p, profit, pos.avg * sellQty, selected, 1);
     execQ = sellQty;
     flash.textContent = `Verkauft: ${sellQty} × ${selected} @ ${fmt(px)} · Gebühr ${fmt(fee)}`;
     flash.className = "flash ok";
@@ -1925,6 +1934,10 @@ $("openStocks").onclick = openStockModal;
 $("closeStocks").onclick = closeStockModal;
 $("stockModal").onclick = e => { if(e.target === $("stockModal")) closeStockModal(); };
 
+/* Merkt sich, für welchen Wert der aktuell im Zielkurs-Feld stehende Text gedacht
+   war – wechselt der Spieler die Aktie, wird ein stehengebliebener Zielkurs
+   verworfen (sonst legte ein „Kauf/Verkauf bei" ihn auf den falschen Wert). */
+let ordPxSym = null;
 function renderAll(){
   const cd = $("countdown");
   if(sandbox){
@@ -1988,6 +2001,19 @@ function renderAll(){
           (sk >= SKEW_MIN ? ' <span class="s-warn">– anfällig für schlechte News!</span>' : "")
         : `Raum-Stimmung: <b class="s-short">${"🐻".repeat(n)} short</b>` +
           (-sk >= SKEW_MIN ? ' <span class="s-warn">– Squeeze-Gefahr bei guten News!</span>' : "");
+    }
+  }
+
+  // Order-Panel (Expert): Zielkurs-Eingabe eindeutig an den GEWÄHLTEN Wert binden.
+  // Buttons/Placeholder tragen das Symbol; ein getippter Zielkurs wird beim
+  // Aktienwechsel verworfen, damit „Kauf/Verkauf bei" nie auf dem falschen Wert landet.
+  if(expert){
+    const bb = $("ordBuyBtn"), sb = $("ordSellBtn"), opx = $("ordPx");
+    if(bb) bb.textContent = "📌 Kauf " + selected;
+    if(sb) sb.textContent = "📌 Verkauf " + selected;
+    if(opx){
+      opx.placeholder = "Zielkurs " + selected;
+      if(ordPxSym !== selected){ opx.value = ""; ordPxSym = selected; }
     }
   }
 

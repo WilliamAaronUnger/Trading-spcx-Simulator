@@ -289,6 +289,7 @@ const AWARDS = [
   {n:"🐻 Short-Seller",      c:(s,x) => s.shorts >= 3},
   {n:"🦈 Hai-Trader",        c:(s,x) => s.volume >= 4 * START_CASH},
   {n:"⚡ News-Jäger",        c:(s,x) => s.newsTrades >= 3},
+  {n:"🎯 Gegen den Strom",   c:(s,x) => (s.contra || 0) >= START_CASH * 0.015},
   {n:"🎰 Glückspilz",        c:(s,x) => s.allIns >= 2 && x.pnl > 0},
   {n:"🎰 Vollzocker",        tOnly:true, c:(s,x) => s.allIns >= 3},
   {n:"🧠 Marktflüsterer",    c:(s,x) => x.pnl >= 400},
