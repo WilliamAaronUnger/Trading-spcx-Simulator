@@ -72,6 +72,9 @@ const DIV_PCT = 0.00006;                                 // ~2,5 % Brutto-Divide
 const DIV_PCT_ETF = 0.00010;                             // ~4,2 % – Sparplan-Bonus, macht den Index-Stil gegen aktives Traden konkurrenzfähig
 const DIV_PAYOUT = Math.max(1, Math.round(20000 / TICK_MS)); // Dividende wird alle ~20 s sichtbar ausgezahlt
 const isDividendSym = sym => { const d = defOf(sym); return !!d && (d.type === "dividend" || sym === ETF_SYM); };
+/* Index-Werte (MKT/ACT): reine Ableitungen ihrer Bestandteile – kein eigener
+   Market-Impact (nicht handel-schiebbar, keine Blockorder-Slippage). */
+const isIndexSym = sym => sym === ETF_SYM || sym === ETF2_SYM;
 // Per-Tick-Dividendensatz eines Symbols (0 = zahlt nichts) – EINE Quelle für Accrual UND Anzeige
 const divRate = sym => { if(sym === ETF_SYM) return DIV_PCT_ETF;
   const d = defOf(sym); return d && d.type === "dividend" ? DIV_PCT * (d.divMult || 1) : 0; };
@@ -289,6 +292,7 @@ const AWARDS = [
   {n:"🐻 Short-Seller",      c:(s,x) => s.shorts >= 3},
   {n:"🦈 Hai-Trader",        c:(s,x) => s.volume >= 4 * START_CASH},
   {n:"⚡ News-Jäger",        c:(s,x) => s.newsTrades >= 3},
+  {n:"🎯 Gegen den Strom",   c:(s,x) => (s.contra || 0) >= START_CASH * 0.015},
   {n:"🎰 Glückspilz",        c:(s,x) => s.allIns >= 2 && x.pnl > 0},
   {n:"🎰 Vollzocker",        tOnly:true, c:(s,x) => s.allIns >= 3},
   {n:"🧠 Marktflüsterer",    c:(s,x) => x.pnl >= 400},
@@ -366,7 +370,7 @@ if(typeof globalThis === "object") Object.assign(globalThis, {
   IMPACT_RAMP_TICKS, IMPACT_FADE_TICKS, IMPACT_KEEP, CASH_PRESETS,
   SKEW_FULL, SKEW_MIN, DAMP_MAX, DAMP_CAP, SQUEEZE_K,
   EXPERT_SPREAD_BASE, SPREAD_WIDE_TICKS, EXPERT_HALT_TICKS, EXPERT_ACT_HOLD,
-  EXPERT_MAX_ORDERS, liqOf, DIV_PCT, DIV_PCT_ETF, DIV_PAYOUT, isDividendSym, divRate,
+  EXPERT_MAX_ORDERS, liqOf, DIV_PCT, DIV_PCT_ETF, DIV_PAYOUT, isDividendSym, isIndexSym, divRate,
   NEWS_POOL, OPENING_EVENT, MEGA_REACT_TICKS, MEGA_PRE_FRAC, MEGA_FADE_FRAC,
   MEGA_POOL, MOMENTUM_POOL, CHAIN_POOL, GENERIC_NEWS, GENERIC_CHAINS, GENERIC_MEGA,
 });
