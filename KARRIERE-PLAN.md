@@ -5,17 +5,23 @@ Uhr laufende Trader-Karriere. Bewusst **vollständig isoliert** — er berührt 
 deterministische Fairness der Duell-Modi noch den Bestrekord noch die Ergebnis-Vergleiche und
 hat eine eigene Persistenz.
 
-## Kernidee
+## Kernidee: Wohlstands-Tycoon
 
-- **Alles steht auf dem Spiel:** der angesparte Kontostand *ist* das Handelskapital. Gewinne
-  compounden, Verluste schrumpfen ihn. Fällt das Vermögen unter `CAREER_MIN` (500 $), gibt es
-  einen Bailout auf `CAREER_START` (10.000 $) — die gekauften Trophäen bleiben (einziger sicherer
-  Hafen).
-- **Echtzeit / Idle:** der Markt läuft nach **Weltzeit durchgehend weiter**, auch wenn die App zu
-  ist. Beim Zurückkommen ist er weitergelaufen; die Positionen sind neu bewertet.
-- **Nur Kosmetik:** vom Gewinn kauft man rein optische Angeber-Objekte (`CAREER_ITEMS`), die in
-  einer Vitrine landen. Kein Balance-Einfluss.
-- **Sammel-Ziel:** Vermögens-Meilensteine (`CAREER_RANKS`, reine Text-Titel) + Trophäen-Sammlung.
+Ein Imperium, das man in Echtzeit aufbaut — die Aktie ist nur noch **Nebenschauplatz**.
+
+- **Einkommen statt reinem Traden:** ein monatliches **Grundeinkommen** (`CAREER_BASIC_INCOME`)
+  plus Ertrag aus gekauften **Assets** (`CAREER_ITEMS`) fließen laufend ins Bargeld. `careerMonthlyIncome`
+  = Grundeinkommen + Σ(`income` × Anzahl); `careerAccrue` schreibt seit dem letzten Aufruf verstrichene
+  „Monate" gut (`CAREER_MONTH_MS` ≈ 5 min, auch **offline**).
+- **Käufe mit Wirkung, beliebig oft:** Assets sind nach `CAREER_CATS` (Immobilien/Unternehmen/Finanzen/
+  Luxus) sortiert, jedes beliebig oft kaufbar; jedes weitere Stück kostet ×`CAREER_COST_MULT`
+  (`careerAssetCost`). Luxus-Güter (`income:0`) sind reines Angeben.
+- **Traden = Kür:** `#careerTradeBtn` betritt den Markt (derselbe Echtzeit-Endlos-Markt); das
+  Imperium-Einkommen läuft dabei weiter in die Kasse. Assets und Traden sind bewusst etwa gleichwertige
+  Wege zum Reichtum.
+- **Bailout:** fällt das Netto-Vermögen unter `CAREER_MIN`, Bargeld zurück auf `CAREER_START`; Besitz bleibt.
+- **Ränge** (`CAREER_RANKS`, reine Text-Titel) nach Netto-Vermögen (Bargeld + Positionen + Güter-Buchwert).
+- **Ton:** die Genre-Idle-Spiele veräppelt, aber ernst umgesetzt — kein Ads/IAP/Timer, jeder Cent verdient.
 
 ## Der endlose Markt (engine.js, rein & testbar)
 

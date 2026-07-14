@@ -50,26 +50,30 @@
   .opt-row.on .opt-check{color:var(--accent)}
   .opt-row .opt-body{display:block}
   .opt-row .opt-sub{display:block;color:var(--muted);font-size:12px;margin-top:3px;line-height:1.45}
-  /* Karriere-Hub: schlichter Kopf (Rang · Vermögen · Bar), kompakter Shop, Vitrine */
-  .career-head{text-align:center;margin-bottom:16px}
+  /* Karriere-Hub (Tycoon): Kopf (Rang · Bargeld · Einkommen · Vermögen), Kategorie-Shop */
+  .career-head{text-align:center;margin-bottom:14px}
   .career-net-big{font-family:var(--mono);font-size:32px;font-weight:800;color:var(--accent);
                   line-height:1.1;margin-top:2px;word-break:break-word}
+  .career-income{font-family:var(--mono);font-size:15px;font-weight:700;color:var(--up);margin-top:4px}
   .career-sub{font-family:var(--mono);font-size:12px;color:var(--muted);margin-top:6px}
   .career-sub b{color:var(--text)}
   .career-note{font-size:12px;margin-top:8px}
-  .career-empty{color:var(--muted);font-size:12px}
-  .shop-note{font-size:11px;color:var(--muted);line-height:1.45;margin:2px 0 6px}
-  .shop-item{display:flex;align-items:center;gap:12px;padding:10px 12px;margin-top:6px;
+  .shop-note{font-size:11px;color:var(--muted);line-height:1.45;margin:2px 0 8px}
+  .shop-cat{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;
+            color:var(--accent);margin:14px 0 4px}
+  .shop-cat:first-child{margin-top:2px}
+  .shop-item{display:flex;align-items:center;gap:12px;padding:9px 12px;margin-top:6px;
              border:1px solid var(--line);border-radius:10px;background:var(--panel-2)}
   .shop-item .si-ic{font-size:20px;flex:0 0 auto;width:26px;text-align:center}
-  .shop-item .si-main{flex:1;min-width:0;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .shop-item .si-main{flex:1;min-width:0;font-size:14px;line-height:1.3}
+  .shop-item .si-cnt{color:var(--accent);font-family:var(--mono);font-size:12px;font-weight:700}
+  .shop-item .si-inc{font-family:var(--mono);font-size:11px;color:var(--up)}
+  .shop-item .si-inc.lux{color:var(--muted)}
   .shop-item .si-price{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--muted);white-space:nowrap}
   .shop-item.affordable{cursor:pointer}
   .shop-item.affordable:hover{border-color:var(--accent)}
   .shop-item.affordable .si-price{color:var(--accent)}
-  .shop-item.owned{border-color:var(--accent);background:#1C2440}
-  .shop-item.owned .si-price{color:var(--up);font-size:15px}
-  .shop-item.locked{opacity:.45}
+  .shop-item.locked{opacity:.5}
   /* 🎓 Limit-/Stop-Orders im Order-Panel */
   /* Einklapp-Umschalter (Progressive Disclosure): fortgeschrittene Ordertypen bleiben
      standardmäßig zu, damit die Grundfläche ruhig ist; offene Orders zeigen ihre Anzahl. */

@@ -303,50 +303,70 @@ const AWARDS = [
   {n:"📊 Solider Trader",    tOnly:true, c:() => true},
 ];
 
-/* ===== Karriere-Modus (browser-only; siehe KARRIERE-PLAN.md) =====
-   Ein Extra-Modus: ein persistenter, weltzeit-getriebener Endlos-Markt, dessen
-   Kontostand das Startkapital IST (compoundet/schrumpft). Vom verdienten Geld
-   kauft man rein kosmetische Trophaeen. Emojis bewusst sparsam: nur je ein
-   `icon` pro Objekt, sonst reiner Text. */
-const CAREER_START = 10000;   // Startkapital einer frischen Karriere
-const CAREER_MIN   = 500;     // faellt das Vermoegen darunter -> Bailout auf CAREER_START (Trophaeen bleiben)
-const CAREER_EPOCH_TICKS = Math.round(60 * 60000 / TICK_MS); // Laenge einer Markt-Epoche (~1 h)
+/* ===== Karriere-Modus: Wohlstands-Tycoon (browser-only; siehe KARRIERE-PLAN.md) =====
+   Ein Extra-Modus: ein Imperium, das du in ECHTZEIT aufbaust – auch offline. Du
+   bekommst ein monatliches Grundeinkommen; den Rest erwirtschaftest du durch
+   ertragbringende KÄUFE (Immobilien/Unternehmen/Finanzen) und/oder durch TRADEN
+   am – jetzt nebensächlichen – Markt. Alles beliebig oft kaufbar (Stückzahl, mit
+   steigenden Stückkosten), nach Kategorien sortiert. Die Genre-Idle-Spiele
+   veräppelt, aber ernst umgesetzt: kein Ads/IAP/Timer, jeder Cent verdient. */
+const CAREER_START        = 10000;                 // Startkapital einer frischen Karriere
+const CAREER_MIN          = 500;                   // darunter -> Bailout auf CAREER_START (Besitz bleibt)
+const CAREER_EPOCH_TICKS  = Math.round(60 * 60000 / TICK_MS); // Länge einer Markt-Epoche (~1 h)
+const CAREER_MONTH_MS     = 5 * 60 * 1000;         // ~1 „Monat" = 5 echte Minuten (Einkommen-Takt)
+const CAREER_BASIC_INCOME = 800;                   // Grundeinkommen je Monat (Sockel, auch ohne Besitz)
+const CAREER_COST_MULT    = 1.13;                  // jedes weitere Stück eines Guts kostet ×1,13
 
-/* Shop: der Millionärs-Lebensstil zum Durchkaufen – vom ersten Luxus bis zur
-   Raumkolonie. Aufsteigend nach Preis, sodass es immer ein nächstes Ziel gibt.
-   Rein kosmetisch; `icon` ist das einzige Emoji je Eintrag, Namen als Text. */
+/* Kategorien (Reihenfolge = Anzeige-Reihenfolge im Shop). */
+const CAREER_CATS = [
+  {id:"immo", name:"Immobilien"},
+  {id:"biz",  name:"Unternehmen"},
+  {id:"fin",  name:"Finanzen"},
+  {id:"lux",  name:"Luxus"},
+];
+
+/* Katalog: `income` = Ertrag je Monat (0 = reiner Luxus/Deko). `baseCost` = Preis
+   des ERSTEN Stücks; jedes weitere ×CAREER_COST_MULT. Beliebig oft kaufbar. */
 const CAREER_ITEMS = [
-  {id:"espresso", icon:"☕",  name:"Siebträger-Maschine",     price:800},
-  {id:"shades",   icon:"🕶️",  name:"Designer-Sonnenbrille",   price:2500},
-  {id:"suit",     icon:"🤵",  name:"Maßanzug",                price:6000},
-  {id:"watch",    icon:"⌚",  name:"Luxusuhr",                price:25000},
-  {id:"cinema",   icon:"🍿",  name:"Heimkino",                price:60000},
-  {id:"bike",     icon:"🏍️",  name:"E-Motorrad",              price:120000},
-  {id:"car",      icon:"🏎️",  name:"Sportwagen",              price:300000},
-  {id:"oldtimer", icon:"🚙",  name:"Oldtimer-Sammlung",       price:900000},
-  {id:"penthouse",icon:"🏙️",  name:"Penthouse",               price:4000000},
-  {id:"villa",    icon:"🏖️",  name:"Villa am Meer",           price:12000000},
-  {id:"vineyard", icon:"🍇",  name:"Weinberg in der Toskana", price:40000000},
-  {id:"heli",     icon:"🚁",  name:"Hubschrauber",            price:90000000},
-  {id:"art",      icon:"🖼️",  name:"Kunstsammlung",           price:250000000},
-  {id:"jet",      icon:"✈️",  name:"Privatjet",               price:700000000},
-  {id:"yacht",    icon:"🛥️",  name:"Mega-Yacht",              price:2000000000},
-  {id:"club",     icon:"🏟️",  name:"Fußballverein",           price:6000000000},
-  {id:"island",   icon:"🏝️",  name:"Privatinsel",             price:20000000000},
-  {id:"tower",    icon:"🏢",  name:"Wolkenkratzer",           price:90000000000},
-  {id:"rocket",   icon:"🚀",  name:"Eigene Rakete",           price:400000000000},
-  {id:"moon",     icon:"🌕",  name:"Mondgrundstück",          price:3000000000000},
-  {id:"colony",   icon:"🪐",  name:"Raumkolonie",             price:30000000000000},
+  // Immobilien
+  {id:"wohnung",     cat:"immo", icon:"🏠",  name:"Eigentumswohnung",  baseCost:5000,          income:250},
+  {id:"reihenhaus",  cat:"immo", icon:"🏡",  name:"Reihenhaus",        baseCost:25000,         income:1400},
+  {id:"mfh",         cat:"immo", icon:"🏘️",  name:"Mehrfamilienhaus",  baseCost:120000,        income:7000},
+  {id:"buero",       cat:"immo", icon:"🏢",  name:"Bürogebäude",       baseCost:600000,        income:38000},
+  {id:"hochhaus",    cat:"immo", icon:"🏬",  name:"Hochhaus",          baseCost:3000000,       income:200000},
+  {id:"wolkenkratzer",cat:"immo",icon:"🌆",  name:"Wolkenkratzer",     baseCost:15000000,      income:1100000},
+  // Unternehmen
+  {id:"kiosk",       cat:"biz",  icon:"🏪",  name:"Kiosk",             baseCost:8000,          income:380},
+  {id:"cafe",        cat:"biz",  icon:"☕",  name:"Café",              baseCost:40000,         income:2100},
+  {id:"restaurant",  cat:"biz",  icon:"🍽️",  name:"Restaurant",        baseCost:200000,        income:11500},
+  {id:"fabrik",      cat:"biz",  icon:"🏭",  name:"Fabrik",            baseCost:1000000,       income:62000},
+  {id:"startup",     cat:"biz",  icon:"💻",  name:"Tech-Startup",      baseCost:5000000,       income:340000},
+  {id:"konzern",     cat:"biz",  icon:"🏙️",  name:"Konzern",           baseCost:25000000,      income:1800000},
+  // Finanzen
+  {id:"kredithai",   cat:"fin",  icon:"🦈",  name:"Kredithai",         baseCost:12000,         income:620},
+  {id:"wechselstube",cat:"fin",  icon:"💱",  name:"Wechselstube",      baseCost:60000,         income:3400},
+  {id:"bank",        cat:"fin",  icon:"🏦",  name:"Bank",              baseCost:350000,        income:21000},
+  {id:"fonds",       cat:"fin",  icon:"📈",  name:"Investmentfonds",   baseCost:1800000,       income:115000},
+  {id:"zentralbank", cat:"fin",  icon:"🏛️",  name:"Eigene Zentralbank",baseCost:40000000,      income:3000000},
+  // Luxus (kein Ertrag – reines Angeben)
+  {id:"car",     cat:"lux", icon:"🏎️", name:"Sportwagen",     baseCost:300000,        income:0},
+  {id:"art",     cat:"lux", icon:"🖼️", name:"Kunstsammlung",  baseCost:2500000,       income:0},
+  {id:"yacht",   cat:"lux", icon:"🛥️", name:"Mega-Yacht",     baseCost:20000000,      income:0},
+  {id:"jet",     cat:"lux", icon:"✈️", name:"Privatjet",      baseCost:80000000,      income:0},
+  {id:"island",  cat:"lux", icon:"🏝️", name:"Privatinsel",    baseCost:500000000,     income:0},
+  {id:"rocket",  cat:"lux", icon:"🚀", name:"Eigene Rakete",  baseCost:8000000000,    income:0},
+  {id:"moon",    cat:"lux", icon:"🌕", name:"Mondgrundstück", baseCost:100000000000,  income:0},
+  {id:"colony",  cat:"lux", icon:"🪐", name:"Raumkolonie",    baseCost:2000000000000, income:0},
 ];
 
 /* Ränge nach Netto-Vermögen (peakNet), Titel als reiner Text. */
 const CAREER_RANKS = [
-  {min:0,          n:"Kleinanleger"},
-  {min:50000,      n:"Trader"},
-  {min:1000000,    n:"Millionär"},
-  {min:1000000000, n:"Milliardär"},
-  {min:1000000000000, n:"Billionär"},
-  {min:1e13,       n:"Weltraum-Tycoon"},
+  {min:0,             n:"Kleinanleger"},
+  {min:100000,        n:"Investor"},
+  {min:1000000,       n:"Millionär"},
+  {min:50000000,      n:"Immobilien-Mogul"},
+  {min:1000000000,    n:"Milliardär"},
+  {min:1000000000000, n:"Wirtschafts-Imperator"},
 ];
 
 const TUT_TICKS = 170;

@@ -1543,15 +1543,19 @@ const CAREER_KEY = "trading-duell-career";
 let careerEpoch = -1;                     // zuletzt aufgebaute Markt-Epoche (Modul-Cache)
 function freshCareer(){
   return {seed: (Math.floor(Math.random() * 0xFFFFFFFF)) >>> 0, anchor: Date.now(),
-          cash: CAREER_START, pos: {}, owned: [], peakNet: CAREER_START,
-          carry: null, carryEpoch: 0, lastTotal: CAREER_START, busted: false};
+          cash: CAREER_START, pos: {}, assets: {}, peakNet: CAREER_START,
+          carry: null, carryEpoch: 0, lastTotal: CAREER_START, lastIncomeAt: Date.now(), busted: false};
 }
 function loadCareer(){
   try{
     const c = JSON.parse(localStorage.getItem(CAREER_KEY));
     if(c && typeof c.seed === "number" && typeof c.cash === "number"){
-      c.owned = Array.isArray(c.owned) ? c.owned : [];
       c.pos = (c.pos && typeof c.pos === "object") ? c.pos : {};
+      if(!c.assets || typeof c.assets !== "object"){   // Migration alter Karrieren (owned[] → assets{})
+        c.assets = {};
+        if(Array.isArray(c.owned)) for(const id of c.owned) c.assets[id] = 1;
+      }
+      if(typeof c.lastIncomeAt !== "number") c.lastIncomeAt = Date.now();
       return c;
     }
   }catch(e){}
@@ -1559,12 +1563,46 @@ function loadCareer(){
 }
 function saveCareer(){ try{ localStorage.setItem(CAREER_KEY, JSON.stringify(career)); }catch(e){} }
 let career = loadCareer();                // null, bis zum ersten Öffnen
+let careerHubTimer = null;                // tickt im Hub Einkommen live hoch
 
-function careerOwnedValue(){
-  let v = 0; for(const it of CAREER_ITEMS) if(career.owned.includes(it.id)) v += it.price; return v;
-}
 function careerRankName(net){
   let n = CAREER_RANKS[0].n; for(const r of CAREER_RANKS) if(net >= r.min) n = r.n; return n;
+}
+/* Monats-Einkommen: Grundeinkommen + Ertrag aller besessenen Güter (× Anzahl). */
+function careerMonthlyIncome(){
+  let inc = CAREER_BASIC_INCOME; const a = career.assets || {};
+  for(const it of CAREER_ITEMS){ const n = a[it.id] || 0; if(n) inc += it.income * n; }
+  return inc;
+}
+/* Buchwert der Güter (Anzahl × Basispreis). */
+function careerAssetsValue(){
+  let v = 0; const a = career.assets || {};
+  for(const it of CAREER_ITEMS){ const n = a[it.id] || 0; if(n) v += it.baseCost * n; }
+  return v;
+}
+/* Preis des NÄCHSTEN Stücks eines Guts (steigt je Besitz). */
+function careerAssetCost(it){
+  const n = (career.assets && career.assets[it.id]) || 0;
+  return Math.round(it.baseCost * Math.pow(CAREER_COST_MULT, n));
+}
+/* Seit dem letzten Aufruf aufgelaufenes Einkommen (auch offline); rückt lastIncomeAt vor. */
+function careerAccrue(){
+  const now = Date.now(), last = career.lastIncomeAt || now;
+  const months = Math.max(0, (now - last) / CAREER_MONTH_MS);
+  career.lastIncomeAt = now;
+  return careerMonthlyIncome() * months;
+}
+/* Tick-Offset in der aktuellen Epoche (ohne Markt-Neuaufbau). */
+function careerOffsetNow(){
+  const g = Math.max(0, Math.floor((Date.now() - career.anchor) / TICK_MS));
+  return g - Math.floor(g / CAREER_EPOCH_TICKS) * CAREER_EPOCH_TICKS;
+}
+/* Netto-Vermögen = Bargeld + offene Positionen (zum aktuellen Kurs) + Güter-Buchwert. */
+function careerNetWorth(){
+  const off = careerOffsetNow();
+  let v = career.cash;
+  if(market) for(const s in career.pos){ const q = career.pos[s].qty, p = market.paths[s]; if(q && p) v += q * p[Math.min(off, p.length - 1)]; }
+  return v + careerAssetsValue();
 }
 /* Aktuelle Epoche + Markt sicherstellen (Carry gecacht → nach Auszeit nur neue
    Epochen simulieren); gibt den Tick-Offset innerhalb der Epoche zurück. */
@@ -1581,19 +1619,11 @@ function careerSyncToNow(force){
   }
   return g - ep * CAREER_EPOCH_TICKS;
 }
-/* Vermögen (Cash + Positionen) zum Offset – aus der persistierten Karriere (Hub-Sicht). */
-function careerStoredTotal(off){
-  let v = career.cash;
-  for(const s in career.pos){
-    const q = career.pos[s].qty, path = market.paths[s];
-    if(q && path) v += q * path[Math.min(off, path.length - 1)];
-  }
-  return v;
-}
-/* Bailout, falls das Vermögen unter CAREER_MIN fällt (Trophäen bleiben). */
-function careerBustCheck(total){
-  if(total < CAREER_MIN){ career.cash = CAREER_START; career.pos = {}; career.busted = true; return CAREER_START; }
-  career.busted = false; return total;
+/* Bailout, falls das Netto-Vermögen unter CAREER_MIN fällt (Güter bleiben – das Imperium
+   trägt einen normalerweise sowieso über der Schwelle). */
+function careerBustCheck(net){
+  if(net < CAREER_MIN){ career.cash = CAREER_START; career.pos = {}; career.busted = true; }
+  else career.busted = false;
 }
 /* Live-Portfolio des aktiven Spielers zurück in die Karriere schreiben. */
 function saveCareerPortfolio(){
@@ -1603,71 +1633,89 @@ function saveCareerPortfolio(){
   career.pos = {};
   for(const s in p.pos){ const q = p.pos[s].qty; if(q) career.pos[s] = {qty: q, avg: p.pos[s].avg}; }
   career.lastTotal = Math.round(totalOf(p) * 100) / 100;
-  career.peakNet = Math.max(career.peakNet || 0, career.lastTotal + careerOwnedValue());
+  career.peakNet = Math.max(career.peakNet || 0, career.lastTotal + careerAssetsValue());
   saveCareer();
 }
 
-/* ---- Hub ---- */
+/* ---- Hub (Imperium-Dashboard) ---- */
+function startCareerHub(){
+  stopCareerHub();
+  careerHubTimer = setInterval(() => {
+    career.cash += careerAccrue();                 // Einkommen tickt live hoch
+    career.peakNet = Math.max(career.peakNet || 0, careerNetWorth());
+    renderCareer(); saveCareer();
+  }, 1000);
+}
+function stopCareerHub(){ if(careerHubTimer){ clearInterval(careerHubTimer); careerHubTimer = null; } }
+
 function openCareer(){
   if(!career) career = freshCareer();
+  stopCareerHub();
   mode = "career";
-  const off = careerSyncToNow(true);
-  let total = careerBustCheck(careerStoredTotal(off));
-  career.peakNet = Math.max(career.peakNet || 0, total + careerOwnedValue());
+  careerSyncToNow(true);                            // Markt für Positionsbewertung bereitstellen
+  career.cash += careerAccrue();                    // Einkommen seit dem letzten Besuch gutschreiben
+  careerBustCheck(careerNetWorth());
+  career.peakNet = Math.max(career.peakNet || 0, careerNetWorth());
   saveCareer(); clearSnapshot();
   $("startScreen").classList.remove("show");
   $("statsScreen").classList.remove("show");
   $("matchScreen").classList.remove("show");
   $("careerScreen").classList.add("show");
   window.scrollTo(0, 0);
-  renderCareer(total);
+  renderCareer();
+  startCareerHub();
 }
-function renderCareer(total){
-  const net = total + careerOwnedValue();
+function renderCareer(){
+  const income = careerMonthlyIncome(), net = careerNetWorth();
   $("careerRank").textContent = careerRankName(career.peakNet);
-  $("careerNet").textContent = fmt(net);
-  $("careerCash").innerHTML = `Bar <b>${fmt(career.cash)}</b> · Bestwert ${fmt(career.peakNet)}`;
+  $("careerCash").textContent = fmt(career.cash);
+  $("careerIncome").textContent = "+" + fmt(income) + " / Monat";
+  $("careerWorth").innerHTML = `Vermögen <b>${fmt(net)}</b> · Rang-Bestwert ${fmt(career.peakNet)}`;
   $("careerNote").innerHTML = career.busted
-    ? `<span style="color:var(--down)">Pleite – ein Investor gibt dir ${fmt(CAREER_START)} neues Startkapital. Deine Trophäen bleiben.</span>`
+    ? `<span style="color:var(--down)">Pleite – ein Investor gibt dir ${fmt(CAREER_START)} frisches Startkapital. Dein Besitz bleibt.</span>`
     : "";
-  // Shop: kompakte Zeilen (Icon · Name · Preis), aufsteigend – immer ein nächstes Ziel sichtbar
-  $("careerShop").innerHTML = CAREER_ITEMS.map(it => {
-    const owned = career.owned.includes(it.id);
-    const afford = !owned && career.cash >= it.price;
-    const cls = owned ? "owned" : afford ? "affordable" : "locked";
-    const right = owned ? "✓" : fmt(it.price);
-    return `<div class="shop-item ${cls}" data-buy="${owned ? "" : it.id}">` +
-      `<span class="si-ic">${it.icon}</span>` +
-      `<span class="si-main">${esc(it.name)}</span>` +
-      `<span class="si-price">${right}</span></div>`;
-  }).join("");
+  // Shop nach Kategorien: jede Zeile Icon · Name (×Anzahl) / Ertrag · nächster Preis
+  let html = "";
+  for(const cat of CAREER_CATS){
+    html += `<div class="shop-cat">${esc(cat.name)}</div>`;
+    for(const it of CAREER_ITEMS.filter(x => x.cat === cat.id)){
+      const n = (career.assets && career.assets[it.id]) || 0;
+      const cost = careerAssetCost(it);
+      const cls = career.cash >= cost ? "affordable" : "locked";
+      const inc = it.income ? `<span class="si-inc">+${fmt(it.income)}/Mon</span>` : `<span class="si-inc lux">reiner Luxus</span>`;
+      const cnt = n ? ` <span class="si-cnt">×${n}</span>` : "";
+      html += `<div class="shop-item ${cls}" data-buy="${it.id}">` +
+        `<span class="si-ic">${it.icon}</span>` +
+        `<span class="si-main">${esc(it.name)}${cnt}<br>${inc}</span>` +
+        `<span class="si-price">${fmt(cost)}</span></div>`;
+    }
+  }
+  $("careerShop").innerHTML = html;
   $("careerShop").querySelectorAll(".shop-item[data-buy]").forEach(el => {
-    const id = el.dataset.buy; if(id) el.onclick = () => buyCareerItem(id);
+    const id = el.dataset.buy; el.onclick = () => buyCareerItem(id);
   });
-  const owned = CAREER_ITEMS.filter(it => career.owned.includes(it.id));
-  const allDone = owned.length === CAREER_ITEMS.length;
-  $("careerCabinetLabel").textContent = `Vitrine · ${owned.length}/${CAREER_ITEMS.length}`;
-  $("careerCabinet").innerHTML = owned.length
-    ? owned.map(it => `<span class="badge">${it.icon} ${esc(it.name)}</span>`).join("") +
-      (allDone ? `<div class="career-empty" style="margin-top:8px">Alles gekauft. War der Luxus es wert? Der Kurs läuft trotzdem weiter.</div>` : "")
-    : `<span class="career-empty">Noch leer – handle dich reich und gönn dir was.</span>`;
 }
 function buyCareerItem(id){
   const it = CAREER_ITEMS.find(x => x.id === id);
-  if(!it || career.owned.includes(id) || career.cash < it.price) return;
-  career.cash = Math.round((career.cash - it.price) * 100) / 100;
-  career.owned.push(id);
+  if(!it) return;
+  const cost = careerAssetCost(it);
+  if(career.cash < cost) return;
+  career.cash = Math.round((career.cash - cost) * 100) / 100;
+  career.assets[id] = ((career.assets[id] || 0) + 1);
+  career.peakNet = Math.max(career.peakNet || 0, careerNetWorth());
   saveCareer();
-  renderCareer(careerStoredTotal(careerSyncToNow(false)));
+  renderCareer();
 }
 
-/* ---- Markt betreten / verlassen ---- */
+/* ---- Markt betreten / verlassen (Nebenschauplatz) ---- */
 function enterCareerMarket(){
   if(!career) career = freshCareer();
+  stopCareerHub();
   mode = "career"; sandbox = false; expert = false; tutorial = false; marketSeed = null;
-  const off = careerSyncToNow(true);
-  const total = careerBustCheck(careerStoredTotal(off));
-  START_CASH = total > 0 ? total : CAREER_START;      // Session-Basislinie → livePnl = Session-Gewinn
+  careerSyncToNow(true);
+  career.cash += careerAccrue();                     // Einkommen bis zum Einstieg gutschreiben
+  careerBustCheck(careerNetWorth());
+  START_CASH = career.cash > 0 ? career.cash : CAREER_START;  // livePnl = Session-Gewinn beim Traden
   const p = newPlayer((loadStore().n1) || "Trader", "var(--p1)");
   p.cash = career.cash; p.pos = {};
   for(const s in career.pos){ const q = career.pos[s].qty; if(q) p.pos[s] = {qty: q, avg: career.pos[s].avg}; }
@@ -1683,7 +1731,7 @@ function leaveCareerToHub(){
 }
 $("careerBtn").onclick = openCareer;
 $("careerTradeBtn").onclick = enterCareerMarket;
-$("careerBackBtn").onclick = () => { $("careerScreen").classList.remove("show"); $("startScreen").classList.add("show"); setTop("single"); };
+$("careerBackBtn").onclick = () => { stopCareerHub(); $("careerScreen").classList.remove("show"); $("startScreen").classList.add("show"); setTop("single"); };
 
 function tick(){
   if(over) return;
@@ -1697,6 +1745,7 @@ function tick(){
     const off = careerSyncToNow(false);
     if(off - tickCount > REACT_TICKS + 10 || off < tickCount) tickCount = off;
     else while(tickCount < off){ tickCount++; processTick(tickCount === off); }
+    if(players[0]) players[0].cash += careerAccrue();   // Imperium-Einkommen läuft beim Traden weiter
     saveCareerPortfolio();
     renderAll();
     return;
