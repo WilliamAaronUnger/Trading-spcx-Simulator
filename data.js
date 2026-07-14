@@ -312,20 +312,31 @@ const CAREER_START = 10000;   // Startkapital einer frischen Karriere
 const CAREER_MIN   = 500;     // faellt das Vermoegen darunter -> Bailout auf CAREER_START (Trophaeen bleiben)
 const CAREER_EPOCH_TICKS = Math.round(60 * 60000 / TICK_MS); // Laenge einer Markt-Epoche (~1 h)
 
-/* Shop: eskalierende Angeber-Objekte. `icon` ist das einzige Emoji je Eintrag. */
+/* Shop: der Millionärs-Lebensstil zum Durchkaufen – vom ersten Luxus bis zur
+   Raumkolonie. Aufsteigend nach Preis, sodass es immer ein nächstes Ziel gibt.
+   Rein kosmetisch; `icon` ist das einzige Emoji je Eintrag, Namen als Text. */
 const CAREER_ITEMS = [
-  {id:"latte",   icon:"☕",  name:"Latte für 9 $",        price:9,              flavor:"Der wichtigste Trade des Tages."},
-  {id:"phones",  icon:"🎧",  name:"Noise-Cancelling",      price:400,           flavor:"Endlich Ruhe vor der Marktpanik."},
-  {id:"sneaks",  icon:"👟",  name:"Designer-Sneaker",      price:1500,          flavor:"Rennen zur nächsten Kauforder."},
-  {id:"watch",   icon:"⌚",  name:"Angeber-Uhr",           price:15000,         flavor:"Zeigt an, dass du keine Zeit hast."},
-  {id:"car",     icon:"🏎️",  name:"Sportwagen",            price:250000,        flavor:"Von 0 auf Insolvenz in 3 Sekunden."},
-  {id:"villa",   icon:"🏰",  name:"Villa am Hügel",        price:2500000,       flavor:"Mit Blick auf deinen Chart."},
-  {id:"yacht",   icon:"🛥️",  name:"Yacht",                 price:30000000,      flavor:"Liquidität, wörtlich genommen."},
-  {id:"island",  icon:"🏝️",  name:"Privatinsel",           price:400000000,     flavor:"Steueroase mit Strand."},
-  {id:"rocket",  icon:"🚀",  name:"Eigene Rakete",         price:5000000000,    flavor:"Jetzt wird's ernst mit SpaceX."},
-  {id:"moon",    icon:"🌕",  name:"Mondgrundstück",        price:80000000000,   flavor:"Lage, Lage, Lage."},
-  {id:"station", icon:"🛰️",  name:"Raumstation",           price:1500000000000, flavor:"Home-Office im Orbit."},
-  {id:"planet",  icon:"🪐",  name:"Ein ganzer Planet",     price:50000000000000,flavor:"Der ultimative Portfolio-Diversifikator."},
+  {id:"espresso", icon:"☕",  name:"Siebträger-Maschine",     price:800},
+  {id:"shades",   icon:"🕶️",  name:"Designer-Sonnenbrille",   price:2500},
+  {id:"suit",     icon:"🤵",  name:"Maßanzug",                price:6000},
+  {id:"watch",    icon:"⌚",  name:"Luxusuhr",                price:25000},
+  {id:"cinema",   icon:"🍿",  name:"Heimkino",                price:60000},
+  {id:"bike",     icon:"🏍️",  name:"E-Motorrad",              price:120000},
+  {id:"car",      icon:"🏎️",  name:"Sportwagen",              price:300000},
+  {id:"oldtimer", icon:"🚙",  name:"Oldtimer-Sammlung",       price:900000},
+  {id:"penthouse",icon:"🏙️",  name:"Penthouse",               price:4000000},
+  {id:"villa",    icon:"🏖️",  name:"Villa am Meer",           price:12000000},
+  {id:"vineyard", icon:"🍇",  name:"Weinberg in der Toskana", price:40000000},
+  {id:"heli",     icon:"🚁",  name:"Hubschrauber",            price:90000000},
+  {id:"art",      icon:"🖼️",  name:"Kunstsammlung",           price:250000000},
+  {id:"jet",      icon:"✈️",  name:"Privatjet",               price:700000000},
+  {id:"yacht",    icon:"🛥️",  name:"Mega-Yacht",              price:2000000000},
+  {id:"club",     icon:"🏟️",  name:"Fußballverein",           price:6000000000},
+  {id:"island",   icon:"🏝️",  name:"Privatinsel",             price:20000000000},
+  {id:"tower",    icon:"🏢",  name:"Wolkenkratzer",           price:90000000000},
+  {id:"rocket",   icon:"🚀",  name:"Eigene Rakete",           price:400000000000},
+  {id:"moon",     icon:"🌕",  name:"Mondgrundstück",          price:3000000000000},
+  {id:"colony",   icon:"🪐",  name:"Raumkolonie",             price:30000000000000},
 ];
 
 /* Ränge nach Netto-Vermögen (peakNet), Titel als reiner Text. */

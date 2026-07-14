@@ -1624,29 +1624,31 @@ function openCareer(){
 }
 function renderCareer(total){
   const net = total + careerOwnedValue();
-  $("careerCash").textContent = fmt(career.cash);
-  $("careerNet").innerHTML = `Vermögen <b>${fmt(net)}</b> · Bestwert ${fmt(career.peakNet)}`;
   $("careerRank").textContent = careerRankName(career.peakNet);
+  $("careerNet").textContent = fmt(net);
+  $("careerCash").innerHTML = `Bar <b>${fmt(career.cash)}</b> · Bestwert ${fmt(career.peakNet)}`;
   $("careerNote").innerHTML = career.busted
     ? `<span style="color:var(--down)">Pleite – ein Investor gibt dir ${fmt(CAREER_START)} neues Startkapital. Deine Trophäen bleiben.</span>`
     : "";
+  // Shop: kompakte Zeilen (Icon · Name · Preis), aufsteigend – immer ein nächstes Ziel sichtbar
   $("careerShop").innerHTML = CAREER_ITEMS.map(it => {
     const owned = career.owned.includes(it.id);
     const afford = !owned && career.cash >= it.price;
     const cls = owned ? "owned" : afford ? "affordable" : "locked";
-    const right = owned ? "✓ besessen" : fmt(it.price);
+    const right = owned ? "✓" : fmt(it.price);
     return `<div class="shop-item ${cls}" data-buy="${owned ? "" : it.id}">` +
       `<span class="si-ic">${it.icon}</span>` +
-      `<span class="si-main"><b>${esc(it.name)}</b><br><span class="si-flav">${esc(it.flavor)}</span></span>` +
+      `<span class="si-main">${esc(it.name)}</span>` +
       `<span class="si-price">${right}</span></div>`;
   }).join("");
   $("careerShop").querySelectorAll(".shop-item[data-buy]").forEach(el => {
     const id = el.dataset.buy; if(id) el.onclick = () => buyCareerItem(id);
   });
   const owned = CAREER_ITEMS.filter(it => career.owned.includes(it.id));
+  $("careerCabinetLabel").textContent = `Vitrine · ${owned.length}/${CAREER_ITEMS.length}`;
   $("careerCabinet").innerHTML = owned.length
     ? owned.map(it => `<span class="badge">${it.icon} ${esc(it.name)}</span>`).join("")
-    : `<span class="si-flav">Noch nichts gekauft – handle dich reich und gönn dir was.</span>`;
+    : `<span class="career-empty">Noch leer – handle dich reich und gönn dir was.</span>`;
 }
 function buyCareerItem(id){
   const it = CAREER_ITEMS.find(x => x.id === id);
