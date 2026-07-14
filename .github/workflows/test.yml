@@ -17,3 +17,5 @@ jobs:
         run: node worker.test.js
       - name: Ende-zu-Ende-Tests
         run: node e2e.test.js
+      - name: Karriere-Markt-Tests
+        run: node career.test.js

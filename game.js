@@ -131,7 +131,7 @@ let gameCode = null;
    null = klassisch offline, dann ist der Spiel-Code selbst der Seed. */
 let marketSeed = null;
 /* Weltzeit-verankerte Modi (kein Pausieren, Tick aus Date.now()) */
-const wallClock = () => mode === "remote" || mode === "room";
+const wallClock = () => mode === "remote" || mode === "room" || mode === "career";
 
 function makeCode(durIdx){
   let c = 100000 + Math.floor(Math.random()*900000);
@@ -246,7 +246,7 @@ const saveStore = s => { try{ localStorage.setItem(STORE_KEY, JSON.stringify(s))
    dem Code; nur Spielzustand (Bargeld, Positionen, Stats, Tick) wandert rein.
    Eigener Schlüssel, getrennt von Namen/Rekord. Tutorial wird nie gesichert. */
 function saveSnapshot(phase){
-  if(tutorial || sandbox || (over && phase !== "handover")) return;
+  if(tutorial || sandbox || mode === "career" || (over && phase !== "handover")) return;
   try{
     localStorage.setItem(GAME_KEY, JSON.stringify({
       v:2, mode, gameCode, durationMin, round,
@@ -1230,6 +1230,7 @@ function startRound(r){
   clearInterval(preTimer); preTimer = null; $("preStart").classList.remove("show");
   $("newsPop").classList.remove("show");
   selected = "SPCX"; qtyMode = "5";
+  ordPanelOpen = false;                 // Limit-/Stop-Panel startet eingeklappt (ruhige Grundfläche)
   favorites = DEFAULT_FAVS.slice(); // Favoriten je Spiel auf Standard zurücksetzen
   document.querySelectorAll(".chip").forEach(x => x.classList.toggle("active", x.dataset.q === "5"));
   $("news").innerHTML = '<div class="empty">Gleich geht\'s los …</div>';
@@ -1237,11 +1238,14 @@ function startRound(r){
   $("pauseBtn").textContent = "⏸ Pause";
   // Remote läuft strikt nach Weltzeit – keine Pause möglich; im Tutorial pausiert der Coach
   $("pauseBtn").style.display = (wallClock() || tutorial) ? "none" : "";
-  $("endSandboxBtn").style.display = sandbox ? "" : "none";
+  $("endSandboxBtn").style.display = (sandbox || mode === "career") ? "" : "none";
+  $("endSandboxBtn").textContent = mode === "career" ? "Zurück zur Karriere" : "⏹ Beenden";
   roundAnchor = wallClock() ? startAt : Date.now();
   $("roundTag").textContent = tutorial
     ? "🎓 Tutorial"
-    : (mode === "solo" && sandbox)
+    : mode === "career"
+      ? "Karriere"
+      : (mode === "solo" && sandbox)
       ? `🏖️${expert ? "🎓" : ""} Sandbox`
       : mode === "solo"
         ? "Einzelspiel"
@@ -1529,9 +1533,170 @@ function processTick(showPopup){
   if(s.peak - tv > s.maxDD) s.maxDD = s.peak - tv;
 }
 
+/* ====================== Karriere-Modus ====================== */
+/* Ein Extra-Modus (KARRIERE-PLAN.md): ein persistenter, weltzeit-getriebener
+   Endlos-Markt. Der Kontostand IST das Kapital (compoundet/schrumpft); vom Gewinn
+   kauft man rein kosmetische Trophäen. Komplett isoliert – kein Bestrekord, keine
+   Duell-Vergleiche, eigene Persistenz (`trading-duell-career`). Der Markt „läuft"
+   allein über die Weltuhr (Epochen mit Preis-Übertrag, engine.js). */
+const CAREER_KEY = "trading-duell-career";
+let careerEpoch = -1;                     // zuletzt aufgebaute Markt-Epoche (Modul-Cache)
+function freshCareer(){
+  return {seed: (Math.floor(Math.random() * 0xFFFFFFFF)) >>> 0, anchor: Date.now(),
+          cash: CAREER_START, pos: {}, owned: [], peakNet: CAREER_START,
+          carry: null, carryEpoch: 0, lastTotal: CAREER_START, busted: false};
+}
+function loadCareer(){
+  try{
+    const c = JSON.parse(localStorage.getItem(CAREER_KEY));
+    if(c && typeof c.seed === "number" && typeof c.cash === "number"){
+      c.owned = Array.isArray(c.owned) ? c.owned : [];
+      c.pos = (c.pos && typeof c.pos === "object") ? c.pos : {};
+      return c;
+    }
+  }catch(e){}
+  return null;
+}
+function saveCareer(){ try{ localStorage.setItem(CAREER_KEY, JSON.stringify(career)); }catch(e){} }
+let career = loadCareer();                // null, bis zum ersten Öffnen
+
+function careerOwnedValue(){
+  let v = 0; for(const it of CAREER_ITEMS) if(career.owned.includes(it.id)) v += it.price; return v;
+}
+function careerRankName(net){
+  let n = CAREER_RANKS[0].n; for(const r of CAREER_RANKS) if(net >= r.min) n = r.n; return n;
+}
+/* Aktuelle Epoche + Markt sicherstellen (Carry gecacht → nach Auszeit nur neue
+   Epochen simulieren); gibt den Tick-Offset innerhalb der Epoche zurück. */
+function careerSyncToNow(force){
+  const g = Math.max(0, Math.floor((Date.now() - career.anchor) / TICK_MS));
+  const ep = Math.floor(g / CAREER_EPOCH_TICKS);
+  if(force || careerEpoch !== ep || !market){
+    const cc = careerCarry(career.seed, ep, CAREER_EPOCH_TICKS,
+                           career.carry ? {carry: career.carry, epoch: career.carryEpoch} : null);
+    career.carry = cc.carry; career.carryEpoch = cc.epoch;
+    market = careerMarket(career.seed, ep, career.carry, CAREER_EPOCH_TICKS);
+    careerEpoch = ep; matchTicks = CAREER_EPOCH_TICKS;
+    saveCareer();
+  }
+  return g - ep * CAREER_EPOCH_TICKS;
+}
+/* Vermögen (Cash + Positionen) zum Offset – aus der persistierten Karriere (Hub-Sicht). */
+function careerStoredTotal(off){
+  let v = career.cash;
+  for(const s in career.pos){
+    const q = career.pos[s].qty, path = market.paths[s];
+    if(q && path) v += q * path[Math.min(off, path.length - 1)];
+  }
+  return v;
+}
+/* Bailout, falls das Vermögen unter CAREER_MIN fällt (Trophäen bleiben). */
+function careerBustCheck(total){
+  if(total < CAREER_MIN){ career.cash = CAREER_START; career.pos = {}; career.busted = true; return CAREER_START; }
+  career.busted = false; return total;
+}
+/* Live-Portfolio des aktiven Spielers zurück in die Karriere schreiben. */
+function saveCareerPortfolio(){
+  if(mode !== "career" || !players[0]) return;
+  const p = players[0];
+  career.cash = Math.round(p.cash * 100) / 100;
+  career.pos = {};
+  for(const s in p.pos){ const q = p.pos[s].qty; if(q) career.pos[s] = {qty: q, avg: p.pos[s].avg}; }
+  career.lastTotal = Math.round(totalOf(p) * 100) / 100;
+  career.peakNet = Math.max(career.peakNet || 0, career.lastTotal + careerOwnedValue());
+  saveCareer();
+}
+
+/* ---- Hub ---- */
+function openCareer(){
+  if(!career) career = freshCareer();
+  mode = "career";
+  const off = careerSyncToNow(true);
+  let total = careerBustCheck(careerStoredTotal(off));
+  career.peakNet = Math.max(career.peakNet || 0, total + careerOwnedValue());
+  saveCareer(); clearSnapshot();
+  $("startScreen").classList.remove("show");
+  $("statsScreen").classList.remove("show");
+  $("matchScreen").classList.remove("show");
+  $("careerScreen").classList.add("show");
+  window.scrollTo(0, 0);
+  renderCareer(total);
+}
+function renderCareer(total){
+  const net = total + careerOwnedValue();
+  $("careerCash").textContent = fmt(career.cash);
+  $("careerNet").innerHTML = `Vermögen <b>${fmt(net)}</b> · Bestwert ${fmt(career.peakNet)}`;
+  $("careerRank").textContent = careerRankName(career.peakNet);
+  $("careerNote").innerHTML = career.busted
+    ? `<span style="color:var(--down)">Pleite – ein Investor gibt dir ${fmt(CAREER_START)} neues Startkapital. Deine Trophäen bleiben.</span>`
+    : "";
+  $("careerShop").innerHTML = CAREER_ITEMS.map(it => {
+    const owned = career.owned.includes(it.id);
+    const afford = !owned && career.cash >= it.price;
+    const cls = owned ? "owned" : afford ? "affordable" : "locked";
+    const right = owned ? "✓ besessen" : fmt(it.price);
+    return `<div class="shop-item ${cls}" data-buy="${owned ? "" : it.id}">` +
+      `<span class="si-ic">${it.icon}</span>` +
+      `<span class="si-main"><b>${esc(it.name)}</b><br><span class="si-flav">${esc(it.flavor)}</span></span>` +
+      `<span class="si-price">${right}</span></div>`;
+  }).join("");
+  $("careerShop").querySelectorAll(".shop-item[data-buy]").forEach(el => {
+    const id = el.dataset.buy; if(id) el.onclick = () => buyCareerItem(id);
+  });
+  const owned = CAREER_ITEMS.filter(it => career.owned.includes(it.id));
+  $("careerCabinet").innerHTML = owned.length
+    ? owned.map(it => `<span class="badge">${it.icon} ${esc(it.name)}</span>`).join("")
+    : `<span class="si-flav">Noch nichts gekauft – handle dich reich und gönn dir was.</span>`;
+}
+function buyCareerItem(id){
+  const it = CAREER_ITEMS.find(x => x.id === id);
+  if(!it || career.owned.includes(id) || career.cash < it.price) return;
+  career.cash = Math.round((career.cash - it.price) * 100) / 100;
+  career.owned.push(id);
+  saveCareer();
+  renderCareer(careerStoredTotal(careerSyncToNow(false)));
+}
+
+/* ---- Markt betreten / verlassen ---- */
+function enterCareerMarket(){
+  if(!career) career = freshCareer();
+  mode = "career"; sandbox = false; expert = false; tutorial = false; marketSeed = null;
+  const off = careerSyncToNow(true);
+  const total = careerBustCheck(careerStoredTotal(off));
+  START_CASH = total > 0 ? total : CAREER_START;      // Session-Basislinie → livePnl = Session-Gewinn
+  const p = newPlayer((loadStore().n1) || "Trader", "var(--p1)");
+  p.cash = career.cash; p.pos = {};
+  for(const s in career.pos){ const q = career.pos[s].qty; if(q) p.pos[s] = {qty: q, avg: career.pos[s].avg}; }
+  players = [p];
+  $("careerScreen").classList.remove("show");
+  startRound(0);
+  tick();                                             // sofort auf die Weltzeit-Position springen
+}
+function leaveCareerToHub(){
+  over = true; clearInterval(timer); stopChartLoop(); stopRace();
+  saveCareerPortfolio();
+  openCareer();
+}
+$("careerBtn").onclick = openCareer;
+$("careerTradeBtn").onclick = enterCareerMarket;
+$("careerBackBtn").onclick = () => { $("careerScreen").classList.remove("show"); $("startScreen").classList.add("show"); setTop("single"); };
+
 function tick(){
   if(over) return;
   lastTickAt = performance.now();
+
+  if(mode === "career"){
+    /* Endlos-Markt nach Weltzeit: Offset in der aktuellen Epoche bestimmen, bei
+       Epochenwechsel den Markt neu aufbauen. Kleine Lücken (normaler Sekundentakt)
+       werden glatt mit Events nachgezogen; große Sprünge (Eintritt/Tab-Schlaf/
+       Epochenwechsel) still übernommen – keine Downtime-Dividenden/Event-Replays. */
+    const off = careerSyncToNow(false);
+    if(off - tickCount > REACT_TICKS + 10 || off < tickCount) tickCount = off;
+    else while(tickCount < off){ tickCount++; processTick(tickCount === off); }
+    saveCareerPortfolio();
+    renderAll();
+    return;
+  }
 
   if(wallClock()){
     /* Weltzeit-Anker: Spielzeit hängt nur an der Uhr, nie an Pausen oder
@@ -1780,6 +1945,7 @@ function trade(side){
            headers: {"x-token": room.token}}).catch(() => {});
   }
   if(tutorial) tutOnTrade(side);
+  if(mode === "career") saveCareerPortfolio();
   saveSnapshot("play");
   renderAll();
 }
@@ -1823,6 +1989,21 @@ function placeOrder(side){
   saveSnapshot("play");
 }
 
+/* Progressive Disclosure: Die fortgeschrittenen Limit-/Stop-Orders sind
+   standardmäßig eingeklappt, damit die Grundfläche (Kaufen/Verkaufen/Short) ruhig
+   bleibt. Offene Orders zeigen ihre Anzahl am Umschalter, damit sie im
+   eingeklappten Zustand nicht in Vergessenheit geraten. */
+let ordPanelOpen = false;
+function applyOrdPanel(){
+  const body = $("ordBody"), tog = $("ordToggle");
+  if(!body || !tog) return;
+  body.style.display = ordPanelOpen ? "" : "none";
+  const n = (players && players[round] && players[round].orders || []).length;
+  const count = n ? ` <span class="ord-count">(${n})</span>` : "";
+  tog.innerHTML = (ordPanelOpen ? "📌 Limit- &amp; Stop-Orders ▾" : "📌 Limit- &amp; Stop-Orders ▸") + count;
+}
+$("ordToggle").onclick = () => { ordPanelOpen = !ordPanelOpen; applyOrdPanel(); };
+
 function renderOrders(){
   const box = $("expertOrders");
   if(!box) return;
@@ -1840,6 +2021,7 @@ function renderOrders(){
     renderOrders();
     saveSnapshot("play");
   });
+  applyOrdPanel();
 }
 
 /* Schlussauktion (Expert-Raum): Endbewertung zum fairen BASIS-Kurs, damit sich
@@ -1940,7 +2122,10 @@ $("stockModal").onclick = e => { if(e.target === $("stockModal")) closeStockModa
 let ordPxSym = null;
 function renderAll(){
   const cd = $("countdown");
-  if(sandbox){
+  if(mode === "career"){
+    cd.textContent = "Karriere";
+    cd.classList.remove("hot");
+  }else if(sandbox){
     const elapsed = Math.round(tickCount * TICK_MS / 1000);
     cd.textContent = String(Math.floor(elapsed/60)).padStart(2,"0") + ":" + String(elapsed%60).padStart(2,"0");
     cd.classList.remove("hot");
@@ -3018,7 +3203,7 @@ $("pauseBtn").onclick = function(){
   paused = !paused;
   this.textContent = paused ? "▶ Weiter" : "⏸ Pause";
 };
-$("endSandboxBtn").onclick = () => { if(!over) endRound(); };
+$("endSandboxBtn").onclick = () => { if(over) return; if(mode === "career") leaveCareerToHub(); else endRound(); };
 $("npSkip").onclick = closeNewsPop;
 $("buyBtn").onclick = () => trade("buy");
 $("sellBtn").onclick = () => trade("sell");
