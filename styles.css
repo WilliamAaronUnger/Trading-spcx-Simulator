@@ -50,6 +50,23 @@
   .opt-row.on .opt-check{color:var(--accent)}
   .opt-row .opt-body{display:block}
   .opt-row .opt-sub{display:block;color:var(--muted);font-size:12px;margin-top:3px;line-height:1.45}
+  /* Karriere-Hub: Rang, Vermögen, Shop-Zeilen, Trophäen-Vitrine */
+  .career-rank{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--accent);margin-top:4px;text-align:center}
+  .career-net{font-family:var(--mono);font-size:13px;color:var(--muted);text-align:center;margin:6px 0 2px}
+  .career-net b{color:var(--text)}
+  .career-note{font-size:12px;text-align:center;margin:6px 0}
+  .shop-item{display:flex;align-items:center;gap:10px;padding:9px 12px;margin-top:6px;
+             border:1px solid var(--line);border-radius:10px;background:var(--panel-2)}
+  .shop-item .si-ic{font-size:22px;flex:0 0 auto;width:28px;text-align:center}
+  .shop-item .si-main{flex:1;min-width:0;font-size:14px}
+  .shop-item .si-flav{color:var(--muted);font-size:11px}
+  .shop-item .si-price{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--muted);white-space:nowrap}
+  .shop-item.affordable{cursor:pointer}
+  .shop-item.affordable:hover{border-color:var(--accent)}
+  .shop-item.affordable .si-price{color:var(--accent)}
+  .shop-item.owned{border-color:var(--accent);background:#1C2440}
+  .shop-item.owned .si-price{color:var(--up)}
+  .shop-item.locked{opacity:.5}
   /* 🎓 Limit-/Stop-Orders im Order-Panel */
   /* Einklapp-Umschalter (Progressive Disclosure): fortgeschrittene Ordertypen bleiben
      standardmäßig zu, damit die Grundfläche ruhig ist; offene Orders zeigen ihre Anzahl. */

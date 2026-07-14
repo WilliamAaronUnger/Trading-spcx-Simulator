@@ -621,9 +621,65 @@ function botSuspicion(mkt, log, ticks){
   return {prescient, reacts, fast, bot: score >= 2};
 }
 
+/* ===== Karriere-Modus: endloser Weltzeit-Markt aus deterministischen Epochen =====
+   Die Karriere-Zeitachse ist in Epochen von `epochTicks` Ticks geschnitten. Jede
+   Epoche `e` ist ein eigener genMarket-Lauf mit einem aus `careerSeed` abgeleiteten
+   Sub-Seed; ihre Aktien-Pfade werden mit einem CARRY-Faktor multipliziert, sodass
+   Epoche e dort startet, wo e-1 endete – eine nahtlose, endlose Kurve. Alles ist
+   reine Funktion von (careerSeed, Epoche), also nach beliebiger Auszeit exakt
+   reproduzierbar (der Markt „laeuft" allein ueber die Weltuhr weiter). Kein State. */
+
+/* Deterministischer 32-bit-Sub-Seed je Epoche (Avalanche-Mix, stabil ueber Sessions). */
+function epochSeed(careerSeed, e){
+  let h = ((careerSeed >>> 0) ^ Math.imul(e + 1, 0x9E3779B1)) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x85EBCA6B);
+  h = Math.imul(h ^ (h >>> 13), 0xC2B2AE35);
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
+/* Carry-Faktoren je Aktie am BEGINN von Epoche `upto` = Produkt der relativen
+   Bewegungen aller frueheren Epochen. Optional ab einem gecachten {carry, epoch}
+   fortsetzen, damit nach langer Auszeit nur die NEUEN Epochen simuliert werden
+   (nicht alle seit Karrierestart). Gibt {carry, epoch:upto} zum Weitercachen zurueck. */
+function careerCarry(careerSeed, upto, epochTicks, cache){
+  const syms = Object.keys(STOCK_DEFS);
+  const carry = {};
+  let from = 0;
+  if(cache && cache.carry && Number.isInteger(cache.epoch) && cache.epoch <= upto){
+    for(const s of syms) carry[s] = cache.carry[s] != null ? cache.carry[s] : 1;
+    from = cache.epoch;
+  }else{
+    for(const s of syms) carry[s] = 1;
+  }
+  for(let e = from; e < upto; e++){
+    const m = genMarket(epochSeed(careerSeed, e), epochTicks);
+    for(const s of syms){
+      const raw = m.paths[s];
+      carry[s] *= raw[raw.length - 1] / STOCK_DEFS[s].start; // relative Bewegung ueber die Epoche
+    }
+  }
+  return {carry, epoch: upto};
+}
+
+/* Effektiver Markt der Epoche `e` im {paths,events,tips}-Format: genMarket-Lauf,
+   Aktien-Pfade × carry, dann MKT/ACT aus den UEBERTRAGENEN Bestandteilen neu
+   ableiten (gleiche Wiederverwendung wie beim Index-Impact). price()/basePrice()
+   im Spiel bleiben unveraendert – sie lesen einfach diese Pfade. */
+function careerMarket(careerSeed, e, carry, epochTicks){
+  const m = genMarket(epochSeed(careerSeed, e), epochTicks);
+  for(const s of Object.keys(STOCK_DEFS)){
+    const c = (carry && carry[s] != null) ? carry[s] : 1;
+    if(c !== 1){ const p = m.paths[s]; for(let i = 0; i < p.length; i++) p[i] *= c; }
+  }
+  addEtfPath(m.paths, epochTicks);      // Index aus den uebertragenen Aktien neu ableiten
+  addActivePath(m.paths, epochTicks);
+  return m;
+}
+
 /* ===== Publish fuer den Worker-Pfad (im Browser harmlos-redundant) ===== */
 if(typeof globalThis === "object") Object.assign(globalThis, {
   mulberry32, genMarket, addEtfPath, addActivePath,
   tradeTick, impactFactorAt, overlayAt, skewAt, findSqueezes, buildEffPaths,
   spreadAtTick, haltLeftAt, replayRound, oracleMaxPnl, botSuspicion,
+  epochSeed, careerCarry, careerMarket,
 });
