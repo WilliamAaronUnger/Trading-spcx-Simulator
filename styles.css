@@ -59,14 +59,20 @@
   .career-sub b{color:var(--text)}
   .career-note{font-size:12px;margin-top:8px}
   .shop-note{font-size:11px;color:var(--muted);line-height:1.45;margin:2px 0 8px}
-  .career-loan .loan-row{display:flex;justify-content:space-between;align-items:center;
-                         font-family:var(--mono);font-size:13px;padding:3px 0}
-  .career-loan .loan-row span{color:var(--muted)}
-  .career-loan .loan-row b{color:var(--text)}
-  .career-loan .loan-debt{color:var(--down)}
-  .career-loan .loan-note{font-size:11px;color:var(--muted);line-height:1.45;margin:4px 0 8px}
-  .career-loan .loan-btns{display:flex;gap:8px}
-  .career-loan .loan-btns .sec-btn{flex:1}
+  /* Kredit-Seite: Zeilen, Vorschau, Betrag/Laufzeit-Eingabe */
+  .loan-row{display:flex;justify-content:space-between;align-items:center;
+            font-family:var(--mono);font-size:13px;padding:4px 0}
+  .loan-row span{color:var(--muted)} .loan-row b{color:var(--text)}
+  .loan-debt{color:var(--down)}
+  .loan-note{font-size:11px;color:var(--muted);line-height:1.45;margin:6px 0 12px}
+  .credit-lbl{display:block;font-family:var(--mono);font-size:11px;letter-spacing:.16em;
+              text-transform:uppercase;color:var(--muted);margin:12px 0 6px}
+  .credit-input{width:100%;height:46px;border-radius:10px;border:1px solid var(--line);
+                background:var(--panel-2);color:var(--text);padding:0 12px;font-family:var(--mono);font-size:16px}
+  .credit-terms{display:flex;gap:8px}
+  .credit-terms .term-btn{flex:1;height:42px;font-size:13px}
+  .credit-preview{background:var(--panel-2);border:1px solid var(--line);border-radius:10px;
+                  padding:8px 12px;margin:12px 0}
   .shop-cat{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;
             color:var(--accent);margin:14px 0 4px}
   .shop-cat:first-child{margin-top:2px}

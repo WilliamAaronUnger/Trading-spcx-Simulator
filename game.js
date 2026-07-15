@@ -1543,7 +1543,7 @@ const CAREER_KEY = "trading-duell-career";
 let careerEpoch = -1;                     // zuletzt aufgebaute Markt-Epoche (Modul-Cache)
 function freshCareer(){
   return {seed: (Math.floor(Math.random() * 0xFFFFFFFF)) >>> 0, anchor: Date.now(),
-          cash: CAREER_START, pos: {}, assets: {}, debt: 0, peakNet: CAREER_START,
+          cash: CAREER_START, pos: {}, assets: {}, loan: null, peakNet: CAREER_START,
           carry: null, carryEpoch: 0, lastTotal: CAREER_START, lastIncomeAt: Date.now(), busted: false};
 }
 function loadCareer(){
@@ -1556,7 +1556,8 @@ function loadCareer(){
         if(Array.isArray(c.owned)) for(const id of c.owned) c.assets[id] = 1;
       }
       if(typeof c.lastIncomeAt !== "number") c.lastIncomeAt = Date.now();
-      if(typeof c.debt !== "number" || c.debt < 0) c.debt = 0;
+      if(!c.loan || typeof c.loan !== "object" || !(c.loan.principal > 0)) c.loan = null; // alte c.debt-Kredite werden erlassen
+      delete c.debt;
       return c;
     }
   }catch(e){}
@@ -1586,31 +1587,52 @@ function careerAssetCost(it){
   const n = (career.assets && career.assets[it.id]) || 0;
   return Math.round(it.baseCost * Math.pow(CAREER_COST_MULT, n));
 }
-/* Seit dem letzten Aufruf: Einkommen (Rückgabe, fürs Bargeld) UND Schuld-Zins
-   (Nebenwirkung – die Schuld wächst). Beides läuft auch offline (Zins immer). */
-function careerAccrue(){
+/* Aktuelle Restschuld (0 = kein Kredit). */
+function careerDebt(){ return career.loan ? career.loan.principal : 0; }
+/* Monatsrate eines Annuitätenkredits (Betrag, Monatszins, Laufzeit). */
+function loanPayment(amount, rate, term){
+  return rate <= 0 ? amount / term : amount * rate / (1 - Math.pow(1 + rate, -term));
+}
+/* Seit dem letzten Aufruf: Einkommen dazu, dann Ratenkredit bedienen (Zins auf die
+   Restschuld + automatische Tilgung der Monatsrate aus dem Bargeld). Gibt das NEUE
+   Bargeld zurück; läuft auch offline. Reicht das Bargeld nicht, wächst die Restschuld
+   (verpasste Rate) – das drückt Richtung Pleite. */
+function careerAccrue(cash){
   const now = Date.now(), last = career.lastIncomeAt || now;
   const months = Math.max(0, (now - last) / CAREER_MONTH_MS);
   career.lastIncomeAt = now;
-  if(career.debt > 0) career.debt = Math.round(career.debt * Math.pow(1 + CAREER_LOAN_RATE, months) * 100) / 100;
-  return careerMonthlyIncome() * months;
+  cash += careerMonthlyIncome() * months;
+  if(career.loan){
+    const L = career.loan;
+    L.principal *= Math.pow(1 + L.rate, months);            // Zins auf die Restschuld
+    const pay = Math.min(L.payment * months, L.principal, Math.max(0, cash));
+    cash -= pay; L.principal -= pay;
+    L.principal = Math.round(L.principal * 100) / 100;
+    if(L.principal < 0.5) career.loan = null;               // abbezahlt
+  }
+  return Math.round(cash * 100) / 100;
 }
-/* Freier Kreditrahmen = LTV × Netto-Vermögen − bereits aufgenommene Schuld. */
+/* Freier Kreditrahmen = LTV × Netto-Vermögen − laufende Restschuld. */
 function careerLoanAvailable(){
-  return Math.max(0, Math.floor(CAREER_LOAN_LTV * careerNetWorth() - (career.debt || 0)));
+  return Math.max(0, Math.floor(CAREER_LOAN_LTV * careerNetWorth() - careerDebt()));
 }
-function careerBorrow(){
-  const amt = careerLoanAvailable();
-  if(amt < 1) return;
-  career.cash += amt; career.debt = (career.debt || 0) + amt;
-  saveCareer(); renderCareer();
+function careerTakeLoan(amount, term){
+  if(career.loan) return;                                   // nur ein Kredit gleichzeitig
+  amount = Math.min(Math.floor(amount || 0), careerLoanAvailable());
+  if(amount < 1 || !CAREER_LOAN_TERMS.includes(term)) return;
+  const payment = Math.round(loanPayment(amount, CAREER_LOAN_RATE, term) * 100) / 100;
+  career.cash += amount;
+  career.loan = {principal: amount, rate: CAREER_LOAN_RATE, payment, term};
+  saveCareer(); renderCredit();
 }
-function careerRepay(){
-  const amt = Math.min(career.cash, career.debt || 0);
-  if(amt < 1) return;
-  career.cash = Math.round((career.cash - amt) * 100) / 100;
-  career.debt = Math.round(((career.debt || 0) - amt) * 100) / 100;
-  saveCareer(); renderCareer();
+function careerRepayLoan(){                                  // Sondertilgung: so viel wie möglich
+  if(!career.loan) return;
+  const pay = Math.min(career.cash, career.loan.principal);
+  if(pay < 1) return;
+  career.cash = Math.round((career.cash - pay) * 100) / 100;
+  career.loan.principal = Math.round((career.loan.principal - pay) * 100) / 100;
+  if(career.loan.principal < 0.5) career.loan = null;
+  saveCareer(); renderCredit();
 }
 /* Tick-Offset in der aktuellen Epoche (ohne Markt-Neuaufbau). */
 function careerOffsetNow(){
@@ -1623,7 +1645,7 @@ function careerNetWorth(){
   const off = careerOffsetNow();
   let v = career.cash;
   if(market) for(const s in career.pos){ const q = career.pos[s].qty, p = market.paths[s]; if(q && p) v += q * p[Math.min(off, p.length - 1)]; }
-  return v + careerAssetsValue() - (career.debt || 0);
+  return v + careerAssetsValue() - careerDebt();
 }
 /* Aktuelle Epoche + Markt sicherstellen (Carry gecacht → nach Auszeit nur neue
    Epochen simulieren); gibt den Tick-Offset innerhalb der Epoche zurück. */
@@ -1646,7 +1668,7 @@ function careerSyncToNow(force){
    Bargeld auf CAREER_START). Genau diese Zähne machen Leihen zu echtem Risiko (kein
    „gewinnst du, behältst du's; verlierst du, wirst du freigekauft"). */
 function careerBustCheck(net){
-  if(net < CAREER_MIN){ career.cash = CAREER_START; career.pos = {}; career.assets = {}; career.debt = 0; career.busted = true; }
+  if(net < CAREER_MIN){ career.cash = CAREER_START; career.pos = {}; career.assets = {}; career.loan = null; career.busted = true; }
   else career.busted = false;
 }
 /* Live-Portfolio des aktiven Spielers zurück in die Karriere schreiben. */
@@ -1665,7 +1687,7 @@ function saveCareerPortfolio(){
 function startCareerHub(){
   stopCareerHub();
   careerHubTimer = setInterval(() => {
-    career.cash += careerAccrue();                 // Einkommen tickt live hoch
+    career.cash = careerAccrue(career.cash);       // Einkommen tickt hoch, Kredit-Rate wird bedient
     career.peakNet = Math.max(career.peakNet || 0, careerNetWorth());
     renderCareer(); saveCareer();
   }, 1000);
@@ -1677,7 +1699,7 @@ function openCareer(){
   stopCareerHub();
   mode = "career";
   careerSyncToNow(true);                            // Markt für Positionsbewertung bereitstellen
-  career.cash += careerAccrue();                    // Einkommen seit dem letzten Besuch gutschreiben
+  career.cash = careerAccrue(career.cash);          // Einkommen seit dem letzten Besuch + Kredit-Rate
   careerBustCheck(careerNetWorth());
   career.peakNet = Math.max(career.peakNet || 0, careerNetWorth());
   saveCareer(); clearSnapshot();
@@ -1698,18 +1720,11 @@ function renderCareer(){
   $("careerNote").innerHTML = career.busted
     ? `<span style="color:var(--down)">Pleite! Dein Imperium wurde liquidiert, die Schulden erlassen – du startest mit ${fmt(CAREER_START)} neu.</span>`
     : "";
-  // Kredit-Panel: Schulden, freier Rahmen, Zins, Aufnehmen/Tilgen
-  const debt = career.debt || 0, avail = careerLoanAvailable();
-  $("careerLoan").innerHTML =
-    `<div class="loan-row"><span>Schulden</span><b class="${debt > 0 ? "loan-debt" : ""}">${fmt(debt)}</b></div>` +
-    `<div class="loan-row"><span>Kreditrahmen frei</span><b>${fmt(avail)}</b></div>` +
-    `<div class="loan-note">Zins ${(CAREER_LOAN_RATE * 100).toFixed(0)} %/Monat – läuft immer, auch offline. Ein geplatzter Hebel kann in die Pleite-Liquidation führen.</div>` +
-    `<div class="loan-btns">` +
-      `<button class="sec-btn" id="loanBorrow"${avail < 1 ? " disabled" : ""}>Kredit aufnehmen</button>` +
-      `<button class="sec-btn" id="loanRepay"${(debt < 1 || career.cash < 1) ? " disabled" : ""}>Tilgen</button>` +
-    `</div>`;
-  if(avail >= 1) $("loanBorrow").onclick = careerBorrow;
-  if(debt >= 1 && career.cash >= 1) $("loanRepay").onclick = careerRepay;
+  // Kredit-Knopf (Details auf der eigenen Seite)
+  const debt = careerDebt();
+  $("careerCreditBtn").textContent = debt > 0
+    ? `Kredit · Restschuld ${fmt(debt)}`
+    : "Kredit aufnehmen";
   // Shop nach Kategorien: jede Zeile Icon · Name (×Anzahl) / Ertrag · nächster Preis
   let html = "";
   for(const cat of CAREER_CATS){
@@ -1749,7 +1764,7 @@ function enterCareerMarket(){
   stopCareerHub();
   mode = "career"; sandbox = false; expert = false; tutorial = false; marketSeed = null;
   careerSyncToNow(true);
-  career.cash += careerAccrue();                     // Einkommen bis zum Einstieg gutschreiben
+  career.cash = careerAccrue(career.cash);           // Einkommen bis zum Einstieg + Kredit-Rate
   careerBustCheck(careerNetWorth());
   START_CASH = career.cash > 0 ? career.cash : CAREER_START;  // livePnl = Session-Gewinn beim Traden
   const p = newPlayer((loadStore().n1) || "Trader", "var(--p1)");
@@ -1765,9 +1780,62 @@ function leaveCareerToHub(){
   saveCareerPortfolio();
   openCareer();
 }
+/* ---- Kredit-Seite (klassischer Ratenkredit) ---- */
+let creditTerm = 12;                                  // gewählte Laufzeit (Monate)
+function openCredit(){
+  stopCareerHub();                                    // Hub-Ticker pausiert, solange wir hier sind
+  careerSyncToNow(true);
+  $("careerScreen").classList.remove("show");
+  $("creditScreen").classList.add("show");
+  window.scrollTo(0, 0);
+  renderCredit();
+}
+function renderCredit(){
+  $("creditWorth").innerHTML = `Netto-Vermögen <b>${fmt(careerNetWorth())}</b>`;
+  const body = $("creditBody");
+  if(career.loan){
+    const L = career.loan, restM = Math.max(1, Math.ceil(L.principal / L.payment));
+    body.innerHTML =
+      `<div class="loan-row"><span>Restschuld</span><b class="loan-debt">${fmt(L.principal)}</b></div>` +
+      `<div class="loan-row"><span>Monatsrate</span><b>${fmt(L.payment)}</b></div>` +
+      `<div class="loan-row"><span>Zins</span><b>${(L.rate * 100).toFixed(1)} %/Monat</b></div>` +
+      `<div class="loan-row"><span>Voraussichtlich noch</span><b>${restM} Monate</b></div>` +
+      `<div class="loan-note">Die Monatsrate wird automatisch vom Bargeld abgebucht – dein Einkommen bedient sie. Solange ein Kredit läuft, kein zweiter.</div>` +
+      `<button class="sec-btn full" id="creditRepay"${career.cash < 1 ? " disabled" : ""}>Sondertilgung – so viel wie möglich</button>`;
+    if(career.cash >= 1) $("creditRepay").onclick = careerRepayLoan;
+  }else{
+    const avail = careerLoanAvailable();
+    body.innerHTML =
+      `<div class="loan-row"><span>Maximaler Kredit</span><b>${fmt(avail)}</b></div>` +
+      `<label class="credit-lbl">Betrag</label>` +
+      `<input id="creditAmount" class="credit-input" type="number" min="0" max="${avail}" value="${Math.floor(avail)}" inputmode="numeric">` +
+      `<label class="credit-lbl">Laufzeit</label>` +
+      `<div class="credit-terms">` + CAREER_LOAN_TERMS.map(t =>
+        `<button class="dur term-btn${t === creditTerm ? " active" : ""}" data-term="${t}">${t} Mon.</button>`).join("") + `</div>` +
+      `<div class="credit-preview" id="creditPreview"></div>` +
+      `<button class="start-btn" id="creditTake"${avail < 1 ? " disabled" : ""}>Kredit aufnehmen</button>`;
+    if($("creditAmount")) $("creditAmount").oninput = renderCreditPreview;
+    body.querySelectorAll(".term-btn").forEach(b => b.onclick = () => { creditTerm = +b.dataset.term; renderCredit(); });
+    if(avail >= 1) $("creditTake").onclick = () => careerTakeLoan(+$("creditAmount").value, creditTerm);
+    renderCreditPreview();
+  }
+}
+function renderCreditPreview(){
+  const el = $("creditPreview"); if(!el) return;
+  const amt = Math.max(0, Math.min(+(($("creditAmount") || {}).value) || 0, careerLoanAvailable()));
+  if(amt < 1){ el.innerHTML = `<div class="loan-note">Betrag wählen …</div>`; return; }
+  const pay = loanPayment(amt, CAREER_LOAN_RATE, creditTerm), total = pay * creditTerm;
+  el.innerHTML =
+    `<div class="loan-row"><span>Monatsrate</span><b>${fmt(pay)}</b></div>` +
+    `<div class="loan-row"><span>Gesamtkosten (${creditTerm} Mon.)</span><b>${fmt(total)}</b></div>` +
+    `<div class="loan-row"><span>davon Zinsen</span><b class="loan-debt">${fmt(total - amt)}</b></div>`;
+}
+
 $("careerBtn").onclick = openCareer;
 $("careerTradeBtn").onclick = enterCareerMarket;
+$("careerCreditBtn").onclick = openCredit;
 $("careerBackBtn").onclick = () => { stopCareerHub(); $("careerScreen").classList.remove("show"); $("startScreen").classList.add("show"); setTop("single"); };
+$("creditBackBtn").onclick = openCareer;
 
 function tick(){
   if(over) return;
@@ -1781,7 +1849,7 @@ function tick(){
     const off = careerSyncToNow(false);
     if(off - tickCount > REACT_TICKS + 10 || off < tickCount) tickCount = off;
     else while(tickCount < off){ tickCount++; processTick(tickCount === off); }
-    if(players[0]) players[0].cash += careerAccrue();   // Imperium-Einkommen läuft beim Traden weiter
+    if(players[0]) players[0].cash = careerAccrue(players[0].cash);   // Einkommen + Kredit-Rate laufen beim Traden weiter
     saveCareerPortfolio();
     renderAll();
     return;

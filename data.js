@@ -317,8 +317,9 @@ const CAREER_MONTH_MS     = 5 * 60 * 1000;         // ~1 „Monat" = 5 echte Min
 const CAREER_BASIC_INCOME = 800;                   // Grundeinkommen je Monat (Sockel, auch ohne Besitz)
 const CAREER_COST_MULT    = 1.13;                  // jedes weitere Stück eines Guts kostet ×1,13
 const CAREER_LOAN_LTV     = 1.0;                   // Kreditrahmen = 1× Netto-Vermögen (max. doppeltes Kapital)
-const CAREER_LOAN_RATE    = 0.08;                  // 8 %/Monat Zins – ÜBER der Asset-Rendite, damit der Hebel
-                                                   // nur mit gutem Traden lohnt (leihen→Assets ist ein Zuschussgeschäft)
+const CAREER_LOAN_RATE    = 0.01;                  // 1 %/Monat auf die Restschuld – klassischer Ratenkredit
+                                                   // (Rate wird automatisch getilgt), sanft statt brutal
+const CAREER_LOAN_TERMS   = [6, 12, 24, 48];       // wählbare Laufzeiten (Monate)
 
 /* Kategorien (Reihenfolge = Anzeige-Reihenfolge im Shop). */
 const CAREER_CATS = [
