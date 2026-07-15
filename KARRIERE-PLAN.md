@@ -19,10 +19,13 @@ Ein Imperium, das man in Echtzeit aufbaut — die Aktie ist nur noch **Nebenscha
 - **Traden = Kür:** `#careerTradeBtn` betritt den Markt (derselbe Echtzeit-Endlos-Markt); das
   Imperium-Einkommen läuft dabei weiter in die Kasse. Assets und Traden sind bewusst etwa gleichwertige
   Wege zum Reichtum.
-- **Kredit / Hebel:** man kann bis `CAREER_LOAN_LTV`× des Netto-Vermögens leihen (`careerLoanAvailable`),
-  Zins `CAREER_LOAN_RATE`/Monat läuft immer (auch offline, kompoundierend in `careerAccrue`). Geliehenes
-  Geld zählt NICHT ins Netto-Vermögen (Schuld wird abgezogen), lohnt sich also nur, wenn man den Zins schlägt
-  – der Zins liegt bewusst über der Asset-Rendite, damit „Kredit zum Traden" der gedachte Einsatz ist.
+- **Kredit / Hebel (eigene Seite `#creditScreen`):** klassischer Ratenkredit – man wählt Betrag (bis
+  `CAREER_LOAN_LTV`× Netto-Vermögen, `careerLoanAvailable`) und Laufzeit (`CAREER_LOAN_TERMS`), sieht live
+  Monatsrate/Gesamtkosten/Zinsen (`loanPayment`, Annuität) und nimmt auf (`careerTakeLoan`). Die feste
+  Monatsrate wird automatisch vom Bargeld getilgt (`careerAccrue`, `CAREER_LOAN_RATE`/Monat auf die Restschuld,
+  läuft auch offline); Sondertilgung jederzeit (`careerRepayLoan`), nur ein Kredit gleichzeitig. `career.loan`
+  = `{principal, rate, payment, term}`; die Restschuld zählt NICHT ins Netto-Vermögen (drückt auch den Rang),
+  der Hebel lohnt also nur, wenn man mehr erwirtschaftet als die Rate kostet.
 - **Pleite-Liquidation:** fällt das Netto-Vermögen unter `CAREER_MIN` (praktisch nur durch einen geplatzten
   Hebel möglich), wird ALLES liquidiert (Güter weg, Schuld erlassen, Bargeld auf `CAREER_START`) – diese Zähne
   machen Leihen zu echtem Risiko statt zu Gratis-Zockerei.
